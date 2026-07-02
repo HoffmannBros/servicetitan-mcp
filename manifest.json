@@ -2,14 +2,14 @@
   "manifest_version": "0.4",
   "name": "servicetitan-mcp",
   "display_name": "Service Titan Desktop MCP",
-  "version": "1.1.3",
+  "version": "1.1.4",
   "description": "Connect Claude to ServiceTitan: jobs, customers, invoices, estimates, dispatch, pricebook, payroll, memberships, and reporting.",
   "author": {
     "name": "Justin Schmidt"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/jtron9k/servicetitan-mcp"
+    "url": "https://github.com/HoffmannBros/servicetitan-mcp"
   },
   "keywords": ["servicetitan", "field-service", "crm", "dispatch", "invoicing"],
   "server": {
