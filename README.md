@@ -12,7 +12,7 @@ This project is a fork of [glassdoc/servicetitan-mcp](https://github.com/glassdo
 
 ```bash
 # Clone and install
-git clone https://github.com/glassdoc/servicetitan-mcp.git
+git clone https://github.com/HoffmannBros/servicetitan-mcp.git
 cd servicetitan-mcp
 pip install -e .
 ```
@@ -22,8 +22,9 @@ pip install -e .
 The easiest way to use this server — no Python, pip, or git required. Claude Desktop
 manages the runtime and dependencies automatically (via its bundled uv).
 
-1. Get the `servicetitan-mcp-<version>.mcpb` file (or build it yourself — see
-   [Building the bundle](#building-the-mcpb-bundle)).
+1. Download `servicetitan-mcp-<version>.mcpb` from the
+   [latest release](https://github.com/HoffmannBros/servicetitan-mcp/releases/latest)
+   (or build it yourself — see [Building the bundle](#building-the-mcpb-bundle)).
 2. Double-click it, or drag it into **Claude Desktop → Settings → Extensions**.
 3. Fill in **Tenant 1** (all five fields are required):
    - **Name** — a short lowercase nickname (e.g. `acme`); you'll use it when talking
