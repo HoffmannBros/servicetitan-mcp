@@ -356,7 +356,7 @@ mcpb pack . dist/servicetitan-mcp-<version>.mcpb
 `.mcpbignore` keeps private and dev-only files (`.env`, `next_steps.md`,
 `report_exports/`, `tests/`, …) out of the archive — the pack output lists every
 included file; it should be exactly `manifest.json`, `pyproject.toml`, `README.md`,
-and the five `servicetitan_mcp/*.py` modules.
+`LICENSE`, and the five `servicetitan_mcp/*.py` modules.
 
 Before sharing, always run the secret pre-flight:
 
@@ -371,4 +371,5 @@ classic `ST_TENANTS` scheme is unaffected and takes precedence when set.
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE). Copyright is held jointly by the original
+[glassdoc](https://github.com/glassdoc) authors and the maintainers of this fork.
