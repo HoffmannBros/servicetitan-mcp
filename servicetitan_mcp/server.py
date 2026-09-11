@@ -715,7 +715,7 @@ async def list_job_hold_reasons(
 
 
 # Job/forms ATTACHMENTS intentionally NOT wrapped: `jpm/.../jobs/{id}/attachments`
-# → 404 (verified live, hoffmann_stl). No list endpoint at that path. Revisit
+# → 404 (verified against a live tenant). No list endpoint at that path. Revisit
 # only if ServiceTitan documents an attachments resource. Don't re-investigate.
 
 
@@ -1217,7 +1217,7 @@ async def list_teams(tenant: str, page: int = 1, page_size: int = 200) -> str:
     return _fmt(data)
 
 
-# Dispatch read endpoints intentionally NOT wrapped (verified live, hoffmann_stl):
+# Dispatch read endpoints intentionally NOT wrapped (verified against a live tenant):
 #   - Real-time GPS / technician locations: `dispatch/.../gps-pings` → 404. The
 #     public REST API does not expose raw GPS pings. Don't re-investigate.
 #   - Capacity: `dispatch/.../capacity` is POST-only (an availability check that
@@ -1401,7 +1401,7 @@ async def list_trucks(tenant: str, page: int = 1, page_size: int = 200) -> str:
 # Inventory transaction feeds. These records embed a full line-`items` array
 # each, so they default to a smaller page_size than the usual 200. All four
 # accept ST's standard createdOnOrAfter/createdOnOrBefore date filters
-# (verified live against hoffmann_stl).
+# (verified against a live tenant).
 
 @mcp.tool()
 async def list_inventory_adjustments(

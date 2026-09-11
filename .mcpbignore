@@ -19,6 +19,7 @@ __pycache__/
 *.pyc
 *.egg-info/
 CLAUDE.md
+AGENTS.md
 Dockerfile
 railway.toml
 pytest.ini

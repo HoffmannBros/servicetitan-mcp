@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "servicetitan-mcp",
   "display_name": "Service Titan Desktop MCP",
-  "version": "1.1.4",
+  "version": "1.1.5",
   "description": "Connect Claude to ServiceTitan: jobs, customers, invoices, estimates, dispatch, pricebook, payroll, memberships, and reporting.",
   "author": {
     "name": "Justin Schmidt"

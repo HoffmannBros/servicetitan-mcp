@@ -1,7 +1,7 @@
 """Tests for the Phase 2 slice-4 read tools.
 
 Locks in the exact paths and query-param mappings for the seven new read tools
-(all live-verified 200 against hoffmann_stl during planning):
+(all live-verified 200 against a live tenant during planning):
   - Inventory transaction feeds: adjustments, transfers, receipts, returns.
   - Dispatch reference: arrival-windows, teams.
   - Customer-interactions: technician-ratings.
