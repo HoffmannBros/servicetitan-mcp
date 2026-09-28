@@ -210,14 +210,15 @@ class ServiceTitanClient:
     def _limiter_for(self, path: str) -> TokenBucket:
         return self._reporting_limiter if path.startswith("/reporting/") else self._main_limiter
 
-    async def _request(
+    async def _send(
         self,
         method: str,
         path: str,
         *,
         params: dict | None = None,
         json_body: dict | list | None = None,
-    ) -> dict:
+    ) -> httpx.Response:
+        """Send with rate limiting + retry; raise on error, return the response."""
         url = f"{API_BASE}{path}"
         limiter = self._limiter_for(path)
 
@@ -232,12 +233,12 @@ class ServiceTitanClient:
 
             if resp.status_code not in self.retry.retry_status:
                 _raise_with_body(resp)
-                return resp.json()
+                return resp
 
             # Retry-eligible failure
             if attempt >= self.retry.max_retries:
                 _raise_with_body(resp)
-                return resp.json()  # unreachable — _raise_with_body raised
+                return resp  # unreachable — _raise_with_body raised
 
             retry_after = _parse_retry_after(resp)
             if retry_after is not None:
@@ -254,6 +255,29 @@ class ServiceTitanClient:
             await asyncio.sleep(wait)
             attempt += 1
 
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: dict | None = None,
+        json_body: dict | list | None = None,
+    ) -> dict:
+        resp = await self._send(method, path, params=params, json_body=json_body)
+        return resp.json() if resp.content else {}
+
+    async def request_with_status(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: dict | None = None,
+        json_body: dict | list | None = None,
+    ) -> tuple[int, dict]:
+        """Like `_request`, but also returns the HTTP status (e.g. 200 vs 202)."""
+        resp = await self._send(method, path, params=params, json_body=json_body)
+        return resp.status_code, (resp.json() if resp.content else {})
+
     async def get(self, path: str, params: dict | None = None, timeout: float = 60) -> dict:
         """GET request. `path` should start with / e.g. /crm/v2/tenant/{tenant}/customers"""
         return await self._request("GET", path, params=params)
@@ -266,6 +290,11 @@ class ServiceTitanClient:
 
     async def put(self, path: str, json_body: dict | list | None = None, timeout: float = 60) -> dict:
         return await self._request("PUT", path, json_body=json_body)
+
+    async def delete(self, path: str) -> dict:
+        """DELETE request. Internal use only (e.g. cancelling report queries);
+        not exposed through servicetitan_api_call."""
+        return await self._request("DELETE", path)
 
     # -- Convenience helpers --
 

@@ -10,6 +10,9 @@ Environment variables (set in claude_desktop_config.json or .env):
   ST_OUTPUTS_DIR                  — (optional) default directory for
                                     `run_report_to_file`; falls back to the
                                     in-repo `report_exports/` if unset
+  ST_REPORT_QUERY_TIMEOUT_S       — (optional) seconds to poll an async
+                                    report query page before cancelling
+                                    (default 600)
 
 Alternative (used by the Claude Desktop .mcpb bundle, whose settings form
 maps fixed field names): numbered slots ST_TENANT_SLOT1_NAME / _ID /
@@ -29,9 +32,11 @@ import sys
 import time
 import traceback
 
+import httpx
+
 from mcp.server.fastmcp import FastMCP
 
-from .client import ServiceTitanClient, main_limiter_for, reporting_limiter_for
+from .client import ServiceTitanClient, _log, main_limiter_for, reporting_limiter_for
 from .config import get_tenant, tenant_names
 from .report_export import ReportFileWriter, resolve_output_path
 
@@ -1905,6 +1910,93 @@ async def get_report_parameter_values(tenant: str, dynamic_set_id: str) -> str:
     return _fmt(data)
 
 
+# ServiceTitan deprecated the synchronous report `/data` endpoint in ST-78
+# (2026-07-02). `/data/query` answers inline (200) when the report finishes in
+# ~10s, otherwise returns 202 + a token to poll at `data-queries/{token}`.
+REPORT_QUERY_TIMEOUT_S = float(os.environ.get("ST_REPORT_QUERY_TIMEOUT_S", "600"))
+
+
+def _camel_keys(d: dict) -> dict:
+    return {(k[:1].lower() + k[1:]) if isinstance(k, str) else k: v for k, v in d.items()}
+
+
+def _normalize_report_payload(data: dict) -> dict:
+    """`/data/query` results are streamed from a blob with PascalCase keys
+    (`Data`, `Fields`, `HasMore`, ...). Map them to the camelCase shape the sync
+    endpoint returned so callers don't care which path served the data."""
+    if not isinstance(data, dict):
+        return data
+    out = _camel_keys(data)
+    fields = out.get("fields")
+    if isinstance(fields, list):
+        out["fields"] = [_camel_keys(f) if isinstance(f, dict) else f for f in fields]
+    return out
+
+
+async def _fetch_report_page(
+    client: ServiceTitanClient,
+    category: str,
+    report_id: int,
+    body: dict,
+    page: int,
+    page_size: int,
+) -> dict:
+    """Fetch one page of report data via the async query API.
+
+    Polls until the query completes or REPORT_QUERY_TIMEOUT_S elapses (then
+    cancels the query to free the tenant's slot and raises TimeoutError).
+    Falls back to the legacy sync `/data` endpoint if `/data/query` 404s.
+
+    Observed live (2026-09): `/data/query` ignores page/pageSize and returns the
+    WHOLE result with page=1 — callers must handle that (see run_report).
+    """
+    base = f"/reporting/v2/tenant/{client.tenant_id}"
+    report_path = f"{base}/report-category/{category}/reports/{report_id}"
+    query = f"?page={page}&pageSize={page_size}&includeTotal=true"
+
+    try:
+        status, data = await client.request_with_status(
+            "POST", f"{report_path}/data/query{query}", json_body=body
+        )
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code != 404:
+            raise
+        _log(f"/data/query 404 for report {report_id}; falling back to sync /data")
+        return await client.post(f"{report_path}/data{query}", json_body=body)
+
+    if status != 202:
+        return _normalize_report_payload(data)
+
+    token = data.get("token")
+    if not token:
+        raise RuntimeError(f"Report query returned 202 without a token: {data}")
+
+    poll_path = f"{base}/data-queries/{token}"
+    deadline = time.monotonic() + REPORT_QUERY_TIMEOUT_S
+    finished = False
+    attempt = 0
+    try:
+        while True:
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"Report {report_id} (page {page}) did not finish within "
+                    f"{REPORT_QUERY_TIMEOUT_S:.0f}s; the query was cancelled. Narrow the "
+                    "date range or raise ST_REPORT_QUERY_TIMEOUT_S."
+                )
+            await asyncio.sleep(min(5 * 2 ** attempt, 30))
+            attempt += 1
+            status, data = await client.request_with_status("GET", poll_path)
+            if status != 202:
+                finished = True
+                return _normalize_report_payload(data)
+    finally:
+        if not finished:
+            try:
+                await client.delete(poll_path)
+            except Exception as exc:  # best-effort cleanup
+                _log(f"Failed to cancel report query {token}: {exc}")
+
+
 @mcp.tool()
 async def run_report(
     tenant: str,
@@ -1938,6 +2030,11 @@ async def run_report(
     Rate limits: reporting has its own bucket (~3 req/min). If you need
     multiple reports, space them out.
 
+    Execution: uses ServiceTitan's async report query API. Small reports
+    return immediately; long ones are polled until ready (can take minutes),
+    up to ST_REPORT_QUERY_TIMEOUT_S (default 600s), after which the query is
+    cancelled and an error is returned.
+
     tenant: name of a configured ServiceTitan tenant (call list_tenants)
     """
     if parameters is not None and not isinstance(parameters, dict):
@@ -1952,11 +2049,21 @@ async def run_report(
         ]
     }
 
-    path = (
-        f"/reporting/v2/tenant/{client.tenant_id}/report-category/{category}"
-        f"/reports/{report_id}/data?page={page}&pageSize={page_size}"
-    )
-    data = await client.post(path, json_body=body)
+    data = await _fetch_report_page(client, category, report_id, body, page, page_size)
+
+    # The async API returns the whole report regardless of page/pageSize;
+    # slice locally so inline output stays page-sized.
+    rows = data.get("data")
+    if isinstance(rows, list) and len(rows) > page_size:
+        start = (page - 1) * page_size
+        data = {
+            **data,
+            "data": rows[start:start + page_size],
+            "page": page,
+            "pageSize": page_size,
+            "totalCount": len(rows),
+            "hasMore": start + page_size < len(rows),
+        }
     return _fmt(data)
 
 
@@ -1997,7 +2104,9 @@ async def run_report_to_file(
     line; preserves null/boolean/numeric types better than CSV).
 
     Notes: large pulls take real wall-clock time under the ~3/min reporting
-    quota (throttling is handled for you, just slow). The result is a
+    quota (throttling is handled for you, just slow); each page runs as an
+    async report query, polled until ready (per-page limit
+    ST_REPORT_QUERY_TIMEOUT_S, default 600s). The result is a
     point-in-time snapshot; if the date window includes today the live dataset
     can shift mid-pagination — a `warning` is returned when the streamed row
     count disagrees with the report's reported total.
@@ -2044,12 +2153,13 @@ async def run_report_to_file(
         writer = ReportFileWriter(fh, fmt)
         page = 1
         while True:
-            path = (
-                f"/reporting/v2/tenant/{client.tenant_id}/report-category/{category}"
-                f"/reports/{report_id}/data?page={page}&pageSize={page_size}"
-                f"&includeTotal=true"
+            data = await _fetch_report_page(
+                client, category, report_id, body, page, page_size
             )
-            data = await client.post(path, json_body=body)
+            if pages_fetched and data.get("page") not in (None, page):
+                # Server ignored paging and re-sent page 1 (async query API
+                # returns the full result); don't write duplicate rows.
+                break
             rows = data.get("data", [])
 
             if pages_fetched == 0:
@@ -2615,13 +2725,26 @@ async def export_feed(
     continueFrom; if hasMore=True call again IMMEDIATELY with that token as
     from_token. hasMore=False = caught up — STOP; wait 5–10 min for later changes.
 
-    category: crm, jpm, accounting, settings, timesheets, dispatch, inventory.
-    feed: feed path within the category. Common feeds:
+    category + feed: API module slug and feed path within it. Available feeds:
         crm: bookings, customers, customers/contacts, leads, locations, locations/contacts
-        jpm: jobs, appointments, projects
-        accounting: invoices, payments
-        settings: employees, business-units
+        jpm: jobs, appointments, projects, job-canceled-logs, job-notes,
+             project-notes, job-history
+        accounting: invoices, invoice-items, payments, inventory-bills
+        sales: estimates
+        memberships: memberships, membership-types, recurring-services,
+             recurring-service-types, recurring-service-events,
+             invoice-templates, membership-status-changes
+        payroll: jobs/splits, jobs/timesheets, payroll-adjustments, activity-codes,
+             timesheet-codes, gross-pay-items, payroll-settings
+        pricebook: categories, services, materials, equipment
+        inventory: adjustments, purchase-orders, receipts, returns, transfers
+        settings: employees, technicians, business-units, tag-types
+        dispatch: appointment-assignments
+        customer-interactions: technician-ratings
+        service-agreements: service-agreements
+        equipmentsystems: installed-equipment, equipment-systems
         timesheets: activities, activity-categories, activity-types
+        telecom: calls
     from_token: continueFrom token from a prior response, OR a start date
         "YYYY-MM-DD". Omit to start from the beginning.
     include_recent_changes: true delivers recent changes faster but may duplicate

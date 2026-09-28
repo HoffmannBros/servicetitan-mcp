@@ -141,7 +141,7 @@ _APP_KEY per tenant. See README for the full migration.
 
 Migration takes ~5 minutes per tenant: rename the four old vars with an `ST_TENANT_<NAME>_` prefix, and add `ST_TENANTS=<name>` naming that tenant. To add additional tenants, repeat the four-var block with new names and extend `ST_TENANTS`.
 
-## Available Tools (88 + `list_tenants`)
+## Available Tools (94 + `list_tenants`)
 
 Every tool below takes `tenant: str` as its first required argument. See "Multi-Tenant Usage" above.
 
@@ -334,7 +334,9 @@ This server layers the following in front of those limits:
   - `ST_RATE_LIMIT_RPS` (default `30`)
   - `ST_REPORTING_RPM` (default `3`)
   - `ST_MAX_CONCURRENCY` (default `10`) — process-wide cap on in-flight requests across all tenants
+  - `ST_REPORT_QUERY_TIMEOUT_S` (default `600`) — how long `run_report` / `run_report_to_file` poll one page of an async report query before cancelling it
   - `ST_OUTPUTS_DIR` (optional) — default directory for `run_report_to_file` output; falls back to the in-repo `report_exports/` if unset. Must be readable by whatever consumes the file (e.g. your sandbox/file tools).
+- **Async report queries.** ServiceTitan deprecated the synchronous report `/data` endpoint in ST-78 (July 2026). `run_report` and `run_report_to_file` use `POST .../data/query`: small reports come back inline, and longer ones return a token that the server polls at `data-queries/{token}` (polls count against the reporting bucket). A query that runs past `ST_REPORT_QUERY_TIMEOUT_S` is cancelled. If a tenant returns 404 for `/data/query`, the server falls back to the legacy `/data` endpoint.
 - **Automatic retry** on `429`, `502`, `503`, `504`:
   - Honors `Retry-After` header if the server sends one.
   - Otherwise exponential backoff: 1s → 2s → 4s, max 3 retries.

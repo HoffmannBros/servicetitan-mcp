@@ -79,7 +79,7 @@ Multi-tenant; configure one or more tenants:
 
 The legacy single-tenant vars (`ST_APP_KEY`, `ST_CLIENT_ID`, `ST_CLIENT_SECRET`, `ST_TENANT_ID`) are no longer read. If they are present without `ST_TENANTS`, startup raises a `RuntimeError` with a migration hint.
 
-Optional tuning, defaults in parentheses: `ST_RATE_LIMIT_RPS` (30, per tenant), `ST_REPORTING_RPM` (3, per tenant), `ST_MAX_CONCURRENCY` (10, process-wide), and `ST_OUTPUTS_DIR`, the default output directory for `run_report_to_file` (unset, exports land in the gitignored `report_exports/`). The export tool streams pages to a `.partial` file and `os.replace`s it only on success.
+Optional tuning, defaults in parentheses: `ST_RATE_LIMIT_RPS` (30, per tenant), `ST_REPORTING_RPM` (3, per tenant), `ST_MAX_CONCURRENCY` (10, process-wide), `ST_REPORT_QUERY_TIMEOUT_S` (600, per-page limit for async report queries), and `ST_OUTPUTS_DIR`, the default output directory for `run_report_to_file` (unset, exports land in the gitignored `report_exports/`). The export tool streams pages to a `.partial` file and `os.replace`s it only on success.
 
 ## Adding a new tool
 
