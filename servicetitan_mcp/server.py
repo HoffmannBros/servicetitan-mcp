@@ -36,6 +36,16 @@ import httpx
 
 from mcp.server.fastmcp import FastMCP
 
+from .attachment_export import (
+    INCLUDE_MODES,
+    build_stem,
+    classify,
+    ext_from_content_type,
+    file_ext,
+    local_date,
+    resolve_photo_dir,
+    selected,
+)
 from .client import ServiceTitanClient, _log, main_limiter_for, reporting_limiter_for
 from .config import get_tenant, tenant_names
 from .report_export import ReportFileWriter, resolve_output_path
@@ -719,9 +729,8 @@ async def list_job_hold_reasons(
     return _fmt(data)
 
 
-# Job/forms ATTACHMENTS intentionally NOT wrapped: `jpm/.../jobs/{id}/attachments`
-# → 404 (verified against a live tenant). No list endpoint at that path. Revisit
-# only if ServiceTitan documents an attachments resource. Don't re-investigate.
+# Job attachments live under `forms`, not `jpm` (the jpm path 404s): see
+# `list_job_attachments` and `download_job_photos` in the FORMS section.
 
 
 @mcp.tool()
@@ -2374,6 +2383,282 @@ async def list_form_submissions(
         params["createdOnOrAfter"] = created_on_or_after
     data = await client.list_resource("forms", "submissions", page, page_size, params)
     return _fmt(data)
+
+
+@mcp.tool()
+async def list_job_attachments(
+    tenant: str, job_id: int, page: int = 1, page_size: int = 200
+) -> str:
+    """List the files attached to one job (metadata only, no image URLs).
+
+    When to use: seeing what photos and documents exist on a job, or getting
+    attachment ids and upload times. Each item has `id`, `fileName`, `title`,
+    `createdOn`, `createdById`. The `fileName` prefix says where a file came
+    from: `Attaches/` are uploads made on the job (field pro photos among
+    them), `Images/` are pricebook/estimate stock images copied at job
+    creation, `CapturedDocs/` are generated PDFs such as signed invoices.
+    When NOT: to get the actual pixels. The response has no viewable URL; use
+    `download_job_photos` to save the files to disk.
+
+    tenant: name of a configured ServiceTitan tenant (call list_tenants)
+    """
+    client = _resolve(tenant)
+    data = await client.list_resource(
+        "forms", f"jobs/{job_id}/attachments", page, page_size
+    )
+    return _fmt(data)
+
+
+async def _list_all(
+    client: ServiceTitanClient,
+    category: str,
+    resource: str,
+    params: dict | None = None,
+    page_size: int = 200,
+    limit: int | None = None,
+) -> tuple[list[dict], bool]:
+    """Page a listing to completion. Returns (items, truncated); `truncated`
+    is True when `limit` cut the walk short of the full result."""
+    items: list[dict] = []
+    page = 1
+    while True:
+        data = await client.list_resource(category, resource, page, page_size, params)
+        rows = data.get("data", []) or []
+        items.extend(rows)
+        has_more = data.get("hasMore")
+        if has_more is None:
+            has_more = len(rows) >= page_size > 0
+        if limit is not None and len(items) >= limit:
+            return items[:limit], bool(has_more) or len(items) > limit
+        if not has_more or not rows:
+            return items, False
+        page += 1
+
+
+async def _id_name_map(
+    client: ServiceTitanClient, category: str, resource: str
+) -> dict[int, str]:
+    rows, _ = await _list_all(client, category, resource, page_size=500)
+    return {r["id"]: r.get("name") or "" for r in rows if r.get("id") is not None}
+
+
+@mcp.tool()
+async def download_job_photos(
+    tenant: str,
+    job_id: int | None = None,
+    completed_on_or_after: str | None = None,
+    completed_before: str | None = None,
+    business_unit_id: int | None = None,
+    job_type_id: int | None = None,
+    include: str = "field_photos",
+    output_dir: str | None = None,
+    timezone: str = "America/Chicago",
+    overwrite: bool = False,
+    max_jobs: int = 200,
+) -> str:
+    """Download the photos attached to completed jobs into a folder on disk.
+
+    When to use: getting field pro photos (install "after" shots and the
+    like) out of ServiceTitan as files. Two modes, pass exactly one:
+      - `job_id`: one completed job.
+      - `completed_on_or_after` (ISO date/datetime, UTC): every job completed
+        from then on, optionally narrowed by `completed_before`,
+        `business_unit_id`, and `job_type_id`. Stops at `max_jobs` and
+        reports `truncated: true` if more matched.
+    When NOT: to see what is attached without downloading, use
+    `list_job_attachments`. This tool does not return images inline and does
+    not pick a before or after shot; nothing in ServiceTitan marks them.
+
+    `include`: "field_photos" (default: images uploaded on the job),
+    "images" (also the pricebook/estimate stock images), or "all" (also PDFs
+    and other documents).
+
+    Files are named
+    `{tenant}__{business unit}__{job type}__{job number}__{date}__{seq}_{attachment id}.{ext}`
+    where `date` is the completed date in `timezone` and `seq` numbers the
+    job's selected files in upload order. Names are deterministic, so a
+    re-run skips files already on disk unless `overwrite=True`. Destination:
+    `output_dir`, else `$ST_OUTPUTS_DIR/job_photos`, else the in-repo
+    `report_exports/job_photos`. Each written file also appends a line to
+    `manifest.jsonl` there, including the attachment's upload time.
+
+    Returns counts plus `jobs_without_files` (job ids that had nothing
+    matching `include`) and `errors` (files that failed; the rest of the run
+    still completes).
+
+    tenant: name of a configured ServiceTitan tenant (call list_tenants)
+    """
+    if (job_id is None) == (completed_on_or_after is None):
+        return (
+            "Error: pass exactly one of 'job_id' (single job) or "
+            "'completed_on_or_after' (batch by completed date)."
+        )
+    if job_id is not None and (
+        completed_before or business_unit_id is not None or job_type_id is not None
+    ):
+        return (
+            "Error: 'completed_before', 'business_unit_id', and 'job_type_id' "
+            "apply only to batch mode; omit them when passing 'job_id'."
+        )
+    mode = include.lower().strip()
+    if mode not in INCLUDE_MODES:
+        return f"Error: 'include' must be one of {list(INCLUDE_MODES)}."
+    if max_jobs < 1:
+        return "Error: 'max_jobs' must be at least 1."
+    try:
+        local_date("2000-01-01T00:00:00Z", timezone)
+    except ValueError as exc:
+        return f"Error: {exc}"
+
+    client = _resolve(tenant)
+    tenant_name = tenant.strip().lower()
+
+    truncated = False
+    if job_id is not None:
+        job = await client.get_resource("jpm", "jobs", job_id)
+        if not job.get("completedOn"):
+            return f"Error: job {job_id} is not completed (no completedOn)."
+        jobs = [job]
+    else:
+        params: dict = {
+            "jobStatus": "Completed",
+            "completedOnOrAfter": completed_on_or_after,
+        }
+        if completed_before:
+            params["completedBefore"] = completed_before
+        if business_unit_id is not None:
+            params["businessUnitId"] = business_unit_id
+        if job_type_id is not None:
+            params["jobTypeId"] = job_type_id
+        jobs, truncated = await _list_all(
+            client, "jpm", "jobs", params, limit=max_jobs
+        )
+
+    bu_names = await _id_name_map(client, "settings", "business-units")
+    job_type_names = await _id_name_map(client, "jpm", "job-types")
+
+    directory = resolve_photo_dir(output_dir)
+    manifest_path = directory / "manifest.jsonl"
+
+    jobs_with_files = 0
+    jobs_without_files: list = []
+    files_written = 0
+    files_skipped = 0
+    bytes_written = 0
+    errors: list[dict] = []
+
+    for job in jobs:
+        jid = job.get("id")
+        completed_on = job.get("completedOn")
+        if not completed_on:
+            errors.append({"job_id": jid, "error": "job has no completedOn"})
+            continue
+        bu_id = job.get("businessUnitId")
+        jt_id = job.get("jobTypeId")
+        bu_name = bu_names.get(bu_id) or f"BU{bu_id}"
+        job_type_name = job_type_names.get(jt_id) or f"JT{jt_id}"
+        date = local_date(completed_on, timezone)
+
+        attachments, _ = await _list_all(
+            client, "forms", f"jobs/{jid}/attachments"
+        )
+        chosen = sorted(
+            (a for a in attachments if selected(classify(a.get("fileName")), mode)),
+            key=lambda a: (a.get("createdOn") or "", a.get("id") or 0),
+        )
+        if not chosen:
+            jobs_without_files.append(jid)
+            continue
+        jobs_with_files += 1
+
+        for seq, att in enumerate(chosen, start=1):
+            att_id = att.get("id")
+            stem = build_stem(
+                tenant_name, bu_name, job_type_name,
+                job.get("jobNumber") or jid, date, seq, att_id,
+            )
+            # Extensionless names (some `Images/` files) only get an extension
+            # from the download's content type, so match those by stem.
+            ext = file_ext(att.get("fileName"))
+            if not overwrite:
+                if ext:
+                    exists = (directory / f"{stem}.{ext}").exists()
+                else:
+                    exists = any(
+                        p.suffix != ".partial" for p in directory.glob(f"{stem}.*")
+                    )
+                if exists:
+                    files_skipped += 1
+                    continue
+
+            tmp = None
+            try:
+                content, content_type = await client.download(
+                    f"/forms/v2/tenant/{client.tenant_id}/jobs/attachment/{att_id}"
+                )
+                final = directory / f"{stem}.{ext or ext_from_content_type(content_type)}"
+                tmp = final.with_name(final.name + ".partial")
+                tmp.write_bytes(content)
+                os.replace(tmp, final)
+            except Exception as exc:
+                if tmp is not None:
+                    try:
+                        os.remove(tmp)
+                    except OSError:
+                        pass
+                errors.append(
+                    {
+                        "job_id": jid,
+                        "attachment_id": att_id,
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
+                )
+                continue
+
+            files_written += 1
+            bytes_written += len(content)
+            with open(manifest_path, "a", encoding="utf-8") as mf:
+                mf.write(
+                    json.dumps(
+                        {
+                            "tenant": tenant_name,
+                            "job_id": jid,
+                            "job_number": job.get("jobNumber"),
+                            "business_unit_id": bu_id,
+                            "business_unit": bu_name,
+                            "job_type_id": jt_id,
+                            "job_type": job_type_name,
+                            "completed_on": completed_on,
+                            "attachment_id": att_id,
+                            "attachment_created_on": att.get("createdOn"),
+                            "file_name": att.get("fileName"),
+                            "title": att.get("title"),
+                            "saved_as": final.name,
+                            "bytes": len(content),
+                        },
+                        default=str,
+                    )
+                    + "\n"
+                )
+
+    return json.dumps(
+        {
+            "output_dir": str(directory),
+            "manifest_path": str(manifest_path),
+            "include": mode,
+            "timezone": timezone,
+            "jobs_matched": len(jobs),
+            "jobs_with_files": jobs_with_files,
+            "jobs_without_files": jobs_without_files,
+            "files_written": files_written,
+            "files_skipped_existing": files_skipped,
+            "bytes_written": bytes_written,
+            "errors": errors,
+            "truncated": truncated,
+        },
+        indent=2,
+        default=str,
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════

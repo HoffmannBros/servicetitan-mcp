@@ -53,12 +53,13 @@ ctx7 docs /websites/developer_servicetitan_io "<specific question>"
 
 ## Layout
 
-Five source files matter:
+Six source files matter:
 
 - [`servicetitan_mcp/auth.py`](servicetitan_mcp/auth.py): `TokenManager` for OAuth2 client credentials. Tokens are cached per `tenant_id` and refreshed about 14 minutes into a 15-minute lifetime.
 - [`servicetitan_mcp/config.py`](servicetitan_mcp/config.py): tenant registry. Reads `ST_TENANTS` plus namespaced per-tenant env vars into `TenantCredentials` records, validates slugs as strict lowercase, and fails fast with a migration hint if the legacy single-tenant vars are set without `ST_TENANTS`.
-- [`servicetitan_mcp/client.py`](servicetitan_mcp/client.py): `ServiceTitanClient`. A shared `httpx.AsyncClient`, per-tenant token buckets from the `main_limiter_for(name)` and `reporting_limiter_for(name)` factories, a process-wide concurrency semaphore, and retry with exponential backoff that honors `Retry-After`.
+- [`servicetitan_mcp/client.py`](servicetitan_mcp/client.py): `ServiceTitanClient`. A shared `httpx.AsyncClient`, per-tenant token buckets from the `main_limiter_for(name)` and `reporting_limiter_for(name)` factories, a process-wide concurrency semaphore, and retry with exponential backoff that honors `Retry-After`. `client.download(path)` is the sanctioned way to fetch binary content.
 - [`servicetitan_mcp/report_export.py`](servicetitan_mcp/report_export.py): path resolution and CSV/JSONL serialization for `run_report_to_file`.
+- [`servicetitan_mcp/attachment_export.py`](servicetitan_mcp/attachment_export.py): pure helpers for `download_job_photos` (attachment classification, filename construction, output directory). Reuses `_expand_path`, `_sanitize`, and `_DEFAULT_EXPORT_DIR` from `report_export.py`.
 - [`servicetitan_mcp/server.py`](servicetitan_mcp/server.py): the `FastMCP` instance, every `@mcp.tool()` handler, the `_fmt()` pagination formatter, the `_get_client(tenant)` and `_resolve(tenant)` factories, and the `list_tenants` discovery tool.
 
 Tests live in [`tests/`](tests/) (pytest-asyncio) and cover the token bucket, retry and concurrency, pagination, input coercion, config, and the tool surfaces.
@@ -79,7 +80,7 @@ Multi-tenant; configure one or more tenants:
 
 The legacy single-tenant vars (`ST_APP_KEY`, `ST_CLIENT_ID`, `ST_CLIENT_SECRET`, `ST_TENANT_ID`) are no longer read. If they are present without `ST_TENANTS`, startup raises a `RuntimeError` with a migration hint.
 
-Optional tuning, defaults in parentheses: `ST_RATE_LIMIT_RPS` (30, per tenant), `ST_REPORTING_RPM` (3, per tenant), `ST_MAX_CONCURRENCY` (10, process-wide), `ST_REPORT_QUERY_TIMEOUT_S` (600, per-page limit for async report queries), and `ST_OUTPUTS_DIR`, the default output directory for `run_report_to_file` (unset, exports land in the gitignored `report_exports/`). The export tool streams pages to a `.partial` file and `os.replace`s it only on success.
+Optional tuning, defaults in parentheses: `ST_RATE_LIMIT_RPS` (30, per tenant), `ST_REPORTING_RPM` (3, per tenant), `ST_MAX_CONCURRENCY` (10, process-wide), `ST_REPORT_QUERY_TIMEOUT_S` (600, per-page limit for async report queries), and `ST_OUTPUTS_DIR`, the default output directory for `run_report_to_file` (unset, exports land in the gitignored `report_exports/`). The export tool streams pages to a `.partial` file and `os.replace`s it only on success. `download_job_photos` writes to a `job_photos/` subfolder of the same directory, with the same `.partial` then `os.replace` pattern per file.
 
 ## Adding a new tool
 
@@ -115,6 +116,7 @@ async def list_<resource>(tenant: str, page: int = 1, page_size: int = 200, ...)
 - **Token refresh is automatic.** Tool code never touches `TokenManager` directly.
 - **One shared HTTP client.** Do not create `httpx.AsyncClient` instances inside handlers; go through `_resolve(tenant)`.
 - **Per-tenant rate limiters.** `main_limiter_for(name)` and `reporting_limiter_for(name)` return per-tenant singletons. The process-wide concurrency semaphore is separate and shared across tenants; it guards local fan-out, not ServiceTitan quota.
+- **Signed download URLs get no ServiceTitan headers.** Attachment downloads 302 to a short-lived signed storage URL. `client.download` follows it by hand with no `Authorization` or `ST-App-Key`, and keeps the signed query string out of error messages. Do not enable `follow_redirects` on the shared client; httpx would forward the credentials and it changes behavior for every other call.
 - **No silent default tenant.** Never add a fallback that picks a tenant when `tenant` is absent. A silent wrong-tenant answer is worse than any UX inconvenience.
 
 ## Git remote

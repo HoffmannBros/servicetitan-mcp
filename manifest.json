@@ -239,7 +239,7 @@
     "outputs_dir": {
       "type": "directory",
       "title": "Report export folder",
-      "description": "Where run_report_to_file saves CSV/JSONL report exports.",
+      "description": "Where run_report_to_file saves CSV/JSONL report exports. download_job_photos saves into a job_photos subfolder here.",
       "required": false,
       "default": "${DOCUMENTS}/ServiceTitan Reports"
     }

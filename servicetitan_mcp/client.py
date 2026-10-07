@@ -30,6 +30,7 @@ from .auth import token_manager
 
 API_BASE = "https://api.servicetitan.io"
 RETRY_STATUS = frozenset({429, 502, 503, 504})
+REDIRECT_STATUS = frozenset({301, 302, 303, 307, 308})
 
 
 def _env_float(name: str, default: float) -> float:
@@ -321,6 +322,65 @@ class ServiceTitanClient:
         """Get a single resource by ID."""
         path = f"/{category}/v2/tenant/{self.tenant_id}/{resource}/{resource_id}"
         return await self.get(path)
+
+    async def download(self, path: str) -> tuple[bytes, str | None]:
+        """GET a binary resource. Returns (content, content_type).
+
+        ServiceTitan answers attachment downloads with a redirect to a
+        short-lived signed storage URL. The first hop goes through `_send`
+        (auth, per-tenant limiter, semaphore, retries). The redirect is then
+        followed by hand with NO ServiceTitan headers: the bearer token and
+        app key must never reach the storage host, which is why the shared
+        client does not enable `follow_redirects`.
+        """
+        resp = await self._send("GET", path)
+        if resp.status_code in REDIRECT_STATUS:
+            location = resp.headers.get("location")
+            if not location:
+                raise RuntimeError(
+                    f"{resp.status_code} redirect without a Location header for {path}"
+                )
+            resp = await self._fetch_signed(str(resp.request.url.join(location)), path)
+        if not resp.content:
+            raise RuntimeError(f"Empty body ({resp.status_code}) downloading {path}")
+        return resp.content, resp.headers.get("content-type")
+
+    async def _fetch_signed(self, url: str, path: str) -> httpx.Response:
+        """Fetch a pre-signed URL without ServiceTitan auth, with retry.
+
+        Errors name the originating API `path` and the storage host only; the
+        signed query string is a credential and stays out of messages.
+        """
+        attempt = 0
+        while True:
+            async with self._sem:
+                resp = await self._client.get(url)
+
+            retryable = resp.status_code in self.retry.retry_status
+            if retryable and attempt < self.retry.max_retries:
+                wait = _parse_retry_after(resp)
+                if wait is None:
+                    wait = min(
+                        self.retry.base_backoff * (2 ** attempt),
+                        self.retry.max_backoff,
+                    )
+                _log(
+                    f"{resp.status_code} on signed download for {path}; "
+                    f"retry {attempt + 1}/{self.retry.max_retries} after {wait:.2f}s"
+                )
+                await asyncio.sleep(wait)
+                attempt += 1
+                continue
+
+            if resp.status_code != 200:
+                raise httpx.HTTPStatusError(
+                    f"{resp.status_code} {resp.reason_phrase} from storage host "
+                    f"{resp.request.url.host} downloading {path}\n"
+                    f"Response body: {resp.text[:2000]}",
+                    request=resp.request,
+                    response=resp,
+                )
+            return resp
 
     async def export_resource(
         self,

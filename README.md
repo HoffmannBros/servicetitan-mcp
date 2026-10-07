@@ -256,6 +256,8 @@ Every tool below takes `tenant: str` as its first required argument. See "Multi-
 ### Forms
 - `list_forms` — Form templates
 - `list_form_submissions` — Submitted forms
+- `list_job_attachments` — Files attached to a job (metadata only; ServiceTitan returns no image URL)
+- `download_job_photos` — Download a job's photos to disk, for one job or every job completed in a date range. Field pro photos by default; files are named `{tenant}__{business unit}__{job type}__{job number}__{completed date}__{seq}_{attachment id}.{ext}` and logged to `manifest.jsonl`
 
 ### Marketing
 - `list_campaigns` — Marketing campaigns
@@ -335,7 +337,7 @@ This server layers the following in front of those limits:
   - `ST_REPORTING_RPM` (default `3`)
   - `ST_MAX_CONCURRENCY` (default `10`) — process-wide cap on in-flight requests across all tenants
   - `ST_REPORT_QUERY_TIMEOUT_S` (default `600`) — how long `run_report` / `run_report_to_file` poll one page of an async report query before cancelling it
-  - `ST_OUTPUTS_DIR` (optional) — default directory for `run_report_to_file` output; falls back to the in-repo `report_exports/` if unset. Must be readable by whatever consumes the file (e.g. your sandbox/file tools).
+  - `ST_OUTPUTS_DIR` (optional) — default directory for `run_report_to_file` output, and the parent of the `job_photos/` folder that `download_job_photos` writes to; falls back to the in-repo `report_exports/` if unset. Must be readable by whatever consumes the file (e.g. your sandbox/file tools).
 - **Async report queries.** ServiceTitan deprecated the synchronous report `/data` endpoint in ST-78 (July 2026). `run_report` and `run_report_to_file` use `POST .../data/query`: small reports come back inline, and longer ones return a token that the server polls at `data-queries/{token}` (polls count against the reporting bucket). A query that runs past `ST_REPORT_QUERY_TIMEOUT_S` is cancelled. If a tenant returns 404 for `/data/query`, the server falls back to the legacy `/data` endpoint.
 - **Automatic retry** on `429`, `502`, `503`, `504`:
   - Honors `Retry-After` header if the server sends one.
@@ -359,7 +361,7 @@ mcpb pack . dist/servicetitan-mcp-<version>.mcpb
 `.mcpbignore` keeps private and dev-only files (`.env`, `next_steps.md`,
 `report_exports/`, `tests/`, …) out of the archive — the pack output lists every
 included file; it should be exactly `manifest.json`, `pyproject.toml`, `README.md`,
-`LICENSE`, and the five `servicetitan_mcp/*.py` modules.
+`LICENSE`, and the seven `servicetitan_mcp/*.py` modules (11 files).
 
 Before sharing, always run the secret pre-flight:
 
