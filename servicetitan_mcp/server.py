@@ -2731,7 +2731,7 @@ async def list_installed_equipment(
     params: dict = {}
     if location_id:
         params["locationId"] = location_id
-    data = await client.list_resource("equipment-systems", "installed-equipment", page, page_size, params)
+    data = await client.list_resource("equipmentsystems", "installed-equipment", page, page_size, params)
     return _fmt(data)
 
 
@@ -3027,7 +3027,7 @@ async def export_feed(
         dispatch: appointment-assignments
         customer-interactions: technician-ratings
         service-agreements: service-agreements
-        equipmentsystems: installed-equipment, equipment-systems
+        equipmentsystems: installed-equipment, equipmentsystems
         timesheets: activities, activity-categories, activity-types
         telecom: calls
     from_token: continueFrom token from a prior response, OR a start date
