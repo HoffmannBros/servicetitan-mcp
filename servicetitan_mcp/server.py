@@ -30,7 +30,6 @@ import json
 import os
 import sys
 import time
-import traceback
 
 import httpx
 
@@ -3083,21 +3082,18 @@ async def servicetitan_api_call(
     client = _resolve(tenant)
     resolved_path = path.replace("{tenant_id}", client.tenant_id)
 
-    try:
-        method_upper = method.upper()
-        if method_upper == "GET":
-            data = await client.get(resolved_path, params=query_params)
-        elif method_upper == "POST":
-            data = await client.post(resolved_path, json_body=body)
-        elif method_upper == "PATCH":
-            data = await client.patch(resolved_path, json_body=body)
-        elif method_upper == "PUT":
-            data = await client.put(resolved_path, json_body=body)
-        else:
-            return f"Unsupported method: {method}. Use GET, POST, PATCH, or PUT."
-        return _fmt(data)
-    except Exception as e:
-        return f"API Error: {e}\n{traceback.format_exc()}"
+    method_upper = method.upper()
+    if method_upper == "GET":
+        data = await client.get(resolved_path, params=query_params)
+    elif method_upper == "POST":
+        data = await client.post(resolved_path, json_body=body, params=query_params)
+    elif method_upper == "PATCH":
+        data = await client.patch(resolved_path, json_body=body, params=query_params)
+    elif method_upper == "PUT":
+        data = await client.put(resolved_path, json_body=body, params=query_params)
+    else:
+        return f"Unsupported method: {method}. Use GET, POST, PATCH, or PUT."
+    return _fmt(data)
 
 
 # ═══════════════════════════════════════════════════════════════════════
