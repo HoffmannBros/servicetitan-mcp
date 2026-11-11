@@ -19,7 +19,11 @@ Guarantees:
     path (no query string) and item counts only. Bodies hold customer data, and
     the client's HTTPStatusError message embeds the body, so it is never shown.
 
-Exit status: 0 if every call passed, 1 if any failed, 2 on bad usage.
+A 403 or 409 whose body says a feature is not enabled for the tenant (for
+example Leads or CRM Contacts switched off) prints NOT-ENABLED, not FAIL, and
+does not affect the exit status: it is tenant configuration, not a bug.
+
+Exit status: 0 if no call FAILed, 1 if any did, 2 on bad usage.
 
 Every @mcp.tool() in servicetitan_mcp.server must appear in REGISTRY or in
 SKIPPED; tests/test_smoke_registry.py enforces that, so a new tool without a
@@ -195,7 +199,34 @@ def _summarize(result: str) -> str:
     return f"chars={len(result or '')}"
 
 
-async def _call(name: str, kwargs: dict, tenant: str) -> tuple[bool, str]:
+PASS, FAIL, NOT_ENABLED = "PASS", "FAIL", "NOT-ENABLED"
+
+# A 403 or 409 whose body says a ServiceTitan feature or package is switched
+# off for the tenant (seen live: "Leads is not enabled.", "...feature that
+# isn't available in your account", MarketingAdsOptimizerPackageIsNotEnabled).
+# That is tenant configuration, not a code bug, so it must not turn a run red.
+# Any other 403/409 (e.g. a missing API scope on the app) stays a FAIL.
+_FEATURE_GATE_STATUSES = frozenset({403, 409})
+_FEATURE_GATE_TEXT = re.compile(
+    r"not enabled|isn'?t available in your account|"
+    r"is not available in your account|IsNotEnabled",
+    re.IGNORECASE,
+)
+
+
+def _is_feature_gate(response: httpx.Response) -> bool:
+    """True for a tenant-feature-off response. Reads the body, never prints it."""
+    if response.status_code not in _FEATURE_GATE_STATUSES:
+        return False
+    try:
+        text = response.text
+    except Exception:  # noqa: BLE001 - unreadable body: treat as a real failure
+        return False
+    return bool(_FEATURE_GATE_TEXT.search(text or ""))
+
+
+async def _call(name: str, kwargs: dict, tenant: str) -> tuple[str, str]:
+    """Returns (PASS | FAIL | NOT-ENABLED, detail). Detail never holds a body."""
     fn = _tool_fn(name)
     call_kwargs = dict(kwargs)
     if "tenant" in inspect.signature(fn).parameters:
@@ -206,16 +237,19 @@ async def _call(name: str, kwargs: dict, tenant: str) -> tuple[bool, str]:
             result = await result
     except httpx.HTTPStatusError as exc:
         # str(exc) embeds the response body; print status and path only.
-        return False, f"HTTP {exc.response.status_code} GET {exc.request.url.path}"
+        detail = f"HTTP {exc.response.status_code} GET {exc.request.url.path}"
+        if _is_feature_gate(exc.response):
+            return NOT_ENABLED, detail + " (feature not enabled on this tenant)"
+        return FAIL, detail
     except httpx.HTTPError as exc:
         try:
             path = exc.request.url.path
         except RuntimeError:  # no request attached
             path = "?"
-        return False, f"{type(exc).__name__} GET {path}"
+        return FAIL, f"{type(exc).__name__} GET {path}"
     except Exception as exc:  # noqa: BLE001 - report and keep going
-        return False, f"{type(exc).__name__} (message suppressed)"
-    return True, _summarize(result)
+        return FAIL, f"{type(exc).__name__} (message suppressed)"
+    return PASS, _summarize(result)
 
 
 async def run(tenant: str) -> int:
@@ -234,17 +268,23 @@ async def run(tenant: str) -> int:
         print(f"SKIP  {name}: {reason}")
 
     failures: list[str] = []
+    not_enabled: list[str] = []
     for name, kwargs in ordered:
-        ok, detail = await _call(name, kwargs, tenant)
-        print(f"{'PASS' if ok else 'FAIL'}  {name}: {detail}")
-        if not ok:
+        outcome, detail = await _call(name, kwargs, tenant)
+        print(f"{outcome}  {name}: {detail}")
+        if outcome == FAIL:
             failures.append(name)
+        elif outcome == NOT_ENABLED:
+            not_enabled.append(name)
 
-    passed = len(ordered) - len(failures)
+    passed = len(ordered) - len(failures) - len(not_enabled)
     print(
         f"\nSummary: {passed} passed, {len(failures)} failed, "
-        f"{len(SKIPPED)} skipped (tenant={tenant})"
+        f"{len(not_enabled)} not enabled, {len(SKIPPED)} skipped "
+        f"(tenant={tenant})"
     )
+    if not_enabled:
+        print("Not enabled on this tenant: " + ", ".join(not_enabled))
     if failures:
         print("Failed: " + ", ".join(failures))
     return 1 if failures else 0

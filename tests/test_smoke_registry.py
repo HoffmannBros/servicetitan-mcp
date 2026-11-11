@@ -139,6 +139,52 @@ async def test_run_reports_failure_and_hides_bodies(monkeypatch, capsys):
     assert lines[-1].split()[1] == "list_report_categories:"
 
 
+async def test_feature_gates_are_not_enabled_not_failures(monkeypatch, capsys):
+    """Tenant-feature-off 409/403 responses print NOT-ENABLED and exit 0."""
+    secret = "Jane Customer 555-0100"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path.endswith("/leads"):
+            return httpx.Response(409, json={"title": "Leads is not enabled.",
+                                             "detail": secret})
+        if path.endswith("/contacts"):
+            return httpx.Response(403, json={
+                "title": "You are trying to access a feature that isn't "
+                         "available in your account.", "detail": secret})
+        return httpx.Response(200, json={"data": [], "page": 1, "pageSize": 1,
+                                         "hasMore": False})
+
+    _wire_client(monkeypatch, handler)
+    rc = await smoke.run("acme")
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert secret not in out
+    assert "NOT-ENABLED  list_leads: HTTP 409 GET /crm/v2/tenant/123/leads" in out
+    assert "NOT-ENABLED  list_contacts: HTTP 403" in out
+    assert "0 failed, 2 not enabled" in out
+    assert "Not enabled on this tenant: list_leads, list_contacts" in out
+    assert "Failed:" not in out
+
+
+@pytest.mark.parametrize("status", [403, 409])
+async def test_other_403_409_still_fail(monkeypatch, capsys, status):
+    """A 403/409 that is not a feature gate (e.g. missing scope) is a FAIL."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/customers"):
+            return httpx.Response(status, json={"title": "Forbidden scope"})
+        return httpx.Response(200, json={"data": [], "page": 1, "pageSize": 1,
+                                         "hasMore": False})
+
+    _wire_client(monkeypatch, handler)
+    assert await smoke.run("acme") == 1
+    out = capsys.readouterr().out
+    assert f"FAIL  list_customers: HTTP {status} GET" in out
+    assert "NOT-ENABLED" not in out
+
+
 async def test_run_all_pass_exits_zero(monkeypatch, capsys):
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "GET"
