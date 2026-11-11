@@ -2716,12 +2716,17 @@ async def list_installed_equipment(
     page: int = 1,
     page_size: int = 200,
     location_id: int | None = None,
+    location_ids: list[int] | None = None,
 ) -> str:
     """List equipment installed at customer locations (serial numbers, install dates).
 
     When to use: "what equipment is at this customer's home", warranty
-    lookups, replacement-age targeting. Always pass `location_id` when
-    you have it.
+    lookups, replacement-age targeting. Always filter by location when
+    you can: `location_id` for one location, `location_ids` for many.
+    `location_ids` fetches equipment for a whole batch of locations in one
+    call, so do NOT call this once per location. Both may be passed; they
+    are combined. Each row carries its `locationId`, so results can be
+    grouped back per location.
     When NOT: for pricebook definitions (what we sell), use
     `list_pricebook_equipment`.
 
@@ -2729,9 +2734,15 @@ async def list_installed_equipment(
     """
     client = _resolve(tenant)
     params: dict = {}
-    if location_id:
-        params["locationId"] = location_id
-    data = await client.list_resource("equipment-systems", "installed-equipment", page, page_size, params)
+    # ServiceTitan honors only the plural `locationIds` (comma-separated);
+    # a singular `locationId` is silently ignored and returns every row.
+    ids: list[int] = []
+    for i in ([location_id] if location_id else []) + list(location_ids or []):
+        if i not in ids:
+            ids.append(i)
+    if ids:
+        params["locationIds"] = ",".join(str(i) for i in ids)
+    data = await client.list_resource("equipmentsystems", "installed-equipment", page, page_size, params)
     return _fmt(data)
 
 
@@ -2755,7 +2766,7 @@ async def list_tasks(
     tenant: name of a configured ServiceTitan tenant (call list_tenants)
     """
     client = _resolve(tenant)
-    data = await client.list_resource("task-management", "tasks", page, page_size)
+    data = await client.list_resource("taskmanagement", "tasks", page, page_size)
     return _fmt(data)
 
 
