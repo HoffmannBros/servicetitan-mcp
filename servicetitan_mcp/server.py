@@ -3620,8 +3620,13 @@ async def servicetitan_api_call(
 # ═══════════════════════════════════════════════════════════════════════
 
 def main():
-    """Run the MCP server via stdio transport."""
-    mcp.run(transport="stdio")
+    """Run the MCP server. Transport comes from MCP_TRANSPORT (default stdio).
+
+    Set MCP_TRANSPORT=sse (or streamable-http) for HTTP deployments, as the
+    Dockerfile does. An unknown value is rejected by FastMCP.run.
+    """
+    transport = os.environ.get("MCP_TRANSPORT", "").strip().lower() or "stdio"
+    mcp.run(transport=transport)
 
 
 if __name__ == "__main__":

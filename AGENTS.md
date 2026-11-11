@@ -49,7 +49,7 @@ ctx7 docs /websites/developer_servicetitan_io "<specific question>"
 
 - Python 3.10+. Dependencies: `mcp[cli]`, `httpx[socks]`, `pydantic`.
 - The console script `servicetitan-mcp` runs `servicetitan_mcp.server:main` (see [pyproject.toml](pyproject.toml)).
-- Transport is stdio by default; set `MCP_TRANSPORT=sse` for HTTP/SSE deployments.
+- Transport is stdio by default; set `MCP_TRANSPORT=sse` (or `streamable-http`) for HTTP deployments. `main()` and the Dockerfile both read it.
 
 ## Layout
 
