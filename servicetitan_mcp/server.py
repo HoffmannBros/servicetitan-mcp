@@ -48,6 +48,8 @@ from .attachment_export import (
 )
 from .client import ServiceTitanClient, _log, main_limiter_for, reporting_limiter_for
 from .config import get_tenant, tenant_names
+from .feed_export import FORMATS as FEED_FORMATS
+from .feed_export import FeedFileWriter, resolve_feed_output_path
 from .report_export import ReportFileWriter, resolve_output_path
 
 # ── Bootstrap ────────────────────────────────────────────────────────
@@ -3242,7 +3244,9 @@ async def export_feed(
     deep page-walking a list_* tool.
     When NOT: for a filtered slice ("jobs for customer X") use the typed list_*
     tool — export feeds do not filter, they stream the whole feed. For
-    pre-aggregated analytics use run_report.
+    pre-aggregated analytics use run_report. For a whole-feed or since-a-date
+    pull of more than a page or two, use export_feed_to_file, which walks every
+    page to a file and returns only metadata.
 
     PAGING (different from list_* tools): omit from_token to start at the
     beginning, or pass a date "YYYY-MM-DD". Each response footer shows
@@ -3281,6 +3285,158 @@ async def export_feed(
         category, feed, from_token, include_recent_changes
     )
     return _fmt_export(data)
+
+
+@mcp.tool()
+async def export_feed_to_file(
+    tenant: str,
+    category: str,
+    feed: str,
+    from_token: str | None = None,
+    format: str = "jsonl",
+    fields: list[str] | None = None,
+    output_path: str | None = None,
+    output_dir: str | None = None,
+    overwrite: bool = False,
+    include_recent_changes: bool = False,
+    max_pages: int | None = None,
+) -> str:
+    """Walk an ENTIRE export feed to a file and return only metadata.
+
+    When to use: a whole-feed pull or a since-a-date pull ("every job changed
+    since 2026-01-01"), or anything over a page or two of export_feed. This
+    follows continueFrom tokens server-side until hasMore=False, streams every
+    record to a file, and returns compact metadata with a 3-record preview. The
+    caller never walks tokens or sees the rows in context.
+    When NOT: a quick peek at one page of a feed, use export_feed. A filtered
+    slice ("jobs for customer X"), use the typed list_* tool; feeds do not
+    filter. Pre-aggregated analytics, use run_report.
+
+    category + feed: same catalog as export_feed (see its docstring for the
+        full list), e.g. jpm/jobs, crm/customers, crm/customers/contacts,
+        crm/locations, memberships/memberships,
+        memberships/membership-status-changes.
+    from_token: a start date "YYYY-MM-DD", or the continue_from token a prior
+        call returned (to resume or to pick up later changes). Omit to start
+        at the beginning of the feed.
+    format: "jsonl" (default; one record per line, as returned) or "csv"
+        (only with `fields`; nested values become compact JSON text).
+    fields: optional list of keys to keep, dotted paths allowed for nested
+        objects ("address.zip"). A missing key gives null (JSONL) or an empty
+        cell (CSV). Output keys and CSV headers are the paths as given.
+    Output target: `output_path` (exact file) or `output_dir` (auto-named
+        `feed_<category>_<feed>_<start>.<ext>`, where start is the date,
+        `full`, or `resume`); neither = the ST_OUTPUTS_DIR env dir, else the
+        in-repo `report_exports/`. Mutually exclusive. Errors rather than
+        overwrite an existing file unless overwrite=True.
+    include_recent_changes: faster delivery of recent changes, but records may
+        repeat across pages; dedupe by id if set.
+    max_pages: stop after this many pages (continue_from lets you resume).
+
+    Result: file_path, format, row_count, pages_fetched, continue_from,
+    caught_up, stopped_reason ("caught_up", "max_pages", or
+    "token_did_not_advance" if a page said hasMore=True without a new token),
+    columns, preview.
+
+    tenant: name of a configured ServiceTitan tenant (call list_tenants)
+    """
+    fmt = (format or "").lower().strip()
+    if fmt not in FEED_FORMATS:
+        return f"Error: 'format' must be one of {', '.join(FEED_FORMATS)}."
+    if fields is not None and (
+        not isinstance(fields, list)
+        or not all(isinstance(f, str) and f for f in fields)
+    ):
+        return "Error: 'fields' must be a list of non-empty key names (dotted paths allowed)."
+    if fmt == "csv" and not fields:
+        return (
+            "Error: format='csv' needs `fields`. Export records are nested "
+            "objects with no fixed column set; choose the columns, or use "
+            "format='jsonl'."
+        )
+    if max_pages is not None and max_pages < 1:
+        return "Error: 'max_pages' must be at least 1."
+
+    client = _resolve(tenant)
+
+    try:
+        final = resolve_feed_output_path(
+            output_path=output_path,
+            output_dir=output_dir,
+            category=category,
+            feed=feed,
+            from_token=from_token,
+            fmt=fmt,
+            overwrite=overwrite,
+        )
+    except (ValueError, FileExistsError) as exc:
+        return f"Error: {exc}"
+
+    tmp = final.with_name(final.name + ".partial")
+    row_count = 0
+    pages_fetched = 0
+    columns: list[str] = list(fields) if fields else []
+    preview: list = []
+    token = from_token or None
+    continue_from = token
+    stopped_reason = "caught_up"
+
+    fh = open(tmp, "w", encoding="utf-8", newline="")
+    try:
+        writer = FeedFileWriter(fh, fmt, fields)
+        while True:
+            data = await client.export_resource(
+                category, feed, token, include_recent_changes
+            )
+            if not isinstance(data, dict):
+                data = {}
+            records = data.get("data") or []
+            selected = writer.write_records(records)
+            row_count += len(records)
+            pages_fetched += 1
+            if not columns and records and isinstance(records[0], dict):
+                columns = list(records[0].keys())
+            for rec in selected:
+                if len(preview) >= 3:
+                    break
+                preview.append(rec)
+
+            has_more = bool(data.get("hasMore", False))
+            next_token = data.get("continueFrom")
+            if next_token:
+                continue_from = next_token
+            if not has_more:
+                stopped_reason = "caught_up"
+                break
+            if not next_token or next_token == token:
+                stopped_reason = "token_did_not_advance"
+                break
+            token = next_token
+            if max_pages is not None and pages_fetched >= max_pages:
+                stopped_reason = "max_pages"
+                break
+        fh.close()
+        os.replace(tmp, final)
+    except BaseException:
+        fh.close()
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+
+    meta = {
+        "file_path": str(final),
+        "format": fmt,
+        "row_count": row_count,
+        "pages_fetched": pages_fetched,
+        "continue_from": continue_from,
+        "caught_up": stopped_reason == "caught_up",
+        "stopped_reason": stopped_reason,
+        "columns": columns,
+        "preview": preview,
+    }
+    return json.dumps(meta, separators=(",", ":"), default=str)
 
 
 @mcp.tool()
