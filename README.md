@@ -266,7 +266,7 @@ The four inventory feeds and `list_technician_ratings` take `created_before` (ex
 - `list_campaign_costs` — Campaign costs
 - `list_reviews` — Online reviews from Marketing Reputation (rating, text, matched job/technician), filterable by publish or import date, rating range, technicians, campaigns, locations, and source
 
-Attributed leads (`/marketingads/v2/.../attributed-leads`) need ServiceTitan's Marketing Pro package; none of the current tenants have it, so there is no typed tool for them yet.
+Attributed leads (`/marketingads/v2/.../attributed-leads`) are not supported: the endpoint needs ServiceTitan's Marketing Pro package and returns 403 on every configured tenant.
 
 ### Equipment, Tasks, Timesheets
 - `list_installed_equipment` — Installed equipment at locations; `location_ids` fetches a whole batch of locations in one call
