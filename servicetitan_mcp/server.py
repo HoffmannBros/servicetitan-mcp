@@ -2859,6 +2859,79 @@ async def list_campaign_costs(
 
 
 # ═══════════════════════════════════════════════════════════════════════
+#  MARKETING REPUTATION — Reviews
+# ═══════════════════════════════════════════════════════════════════════
+
+@mcp.tool()
+async def list_reviews(
+    tenant: str,
+    page: int = 1,
+    page_size: int = 200,
+    from_date: str | None = None,
+    to_date: str | None = None,
+    created_on_or_after: str | None = None,
+    created_before: str | None = None,
+    from_rating: float | None = None,
+    to_rating: float | None = None,
+    technician_ids: list[int] | None = None,
+    campaign_ids: list[int] | None = None,
+    location_ids: list[int] | None = None,
+    sources: list[str] | None = None,
+) -> str:
+    """List online customer reviews (Google etc.) from Marketing Reputation.
+
+    Each row has the rating, review text, platform, publish date, the
+    business's reply, and — when ServiceTitan matched the review to a job —
+    jobId, technicianId/technicianFullName, businessUnitId and customerId.
+    Many older reviews are unmatched (those fields are null).
+
+    When to use: technician coaching (reviews per tech, low-rating audits),
+    campaign or location review analysis, review-volume trends.
+    When NOT: for post-job survey scores, use `list_technician_ratings`.
+
+    from_date / to_date: review publish window (ISO 8601 date-time).
+    created_on_or_after / created_before: when the review was imported into
+        ServiceTitan (not when it was published).
+    from_rating / to_rating: inclusive star-rating bounds, e.g. 1 and 2
+        for negative reviews.
+    technician_ids / campaign_ids / location_ids: match any of the IDs.
+        Unmatched reviews are excluded once one of these is set.
+    sources: review platforms, e.g. ["Google"].
+
+    tenant: name of a configured ServiceTitan tenant (call list_tenants)
+    """
+    client = _resolve(tenant)
+    params: dict = {}
+    if from_date:
+        params["fromDate"] = from_date
+    if to_date:
+        params["toDate"] = to_date
+    if created_on_or_after:
+        params["createdOnOrAfter"] = created_on_or_after
+    if created_before:
+        params["createdBefore"] = created_before
+    if from_rating is not None:
+        params["fromRating"] = from_rating
+    if to_rating is not None:
+        params["toRating"] = to_rating
+    # Array params must be repeated keys (?technicianIds=1&technicianIds=2);
+    # ServiceTitan rejects a comma-joined value with a 400. httpx repeats
+    # the key for list values.
+    if technician_ids:
+        params["technicianIds"] = list(technician_ids)
+    if campaign_ids:
+        params["campaignIds"] = list(campaign_ids)
+    if location_ids:
+        params["locationIds"] = list(location_ids)
+    if sources:
+        params["sources"] = list(sources)
+    data = await client.list_resource(
+        "marketingreputation", "reviews", page, page_size, params
+    )
+    return _fmt(data)
+
+
+# ═══════════════════════════════════════════════════════════════════════
 #  EQUIPMENT SYSTEMS
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -2986,6 +3059,7 @@ _LOOKUP_KINDS: dict[str, tuple[str, str]] = {
     "trucks": ("inventory", "trucks"),
     "user_roles": ("settings", "user-roles"),
     "campaigns": ("marketing", "campaigns"),
+    "call_reasons": ("jbce", "call-reasons"),
 }
 
 # Per-(tenant, kind) cache for the lookup resource. These tables are static
@@ -3034,8 +3108,9 @@ async def get_lookup_tables(
     kinds: subset of {business_units, job_types, zones, warehouses,
         payment_types, tax_zones, payment_terms, membership_types,
         tag_types, activity_categories, pricebook_categories,
-        inventory_vendors, trucks, user_roles, campaigns}. Defaults to
-        the full set when omitted.
+        inventory_vendors, trucks, user_roles, campaigns, call_reasons}.
+        Defaults to the full set when omitted. call_reasons are the
+        Job Booking reasons a CSR picks for a call that did not book.
 
     tenant: name of a configured ServiceTitan tenant (call list_tenants)
     """
@@ -3107,7 +3182,8 @@ def resource_tenants() -> str:
         "business_units, job_types, zones, warehouses, payment_types, "
         "tax_zones, payment_terms, membership_types, tag_types, "
         "activity_categories, pricebook_categories, inventory_vendors, "
-        "trucks, user_roles, campaigns. Cached server-side per (tenant, "
+        "trucks, user_roles, campaigns, call_reasons. Cached server-side "
+        "per (tenant, "
         "kind) for one hour."
     ),
     mime_type="application/json",
