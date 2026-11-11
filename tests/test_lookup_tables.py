@@ -175,6 +175,7 @@ def test_lookup_kinds_covers_documented_static_tables():
         "trucks",
         "user_roles",
         "campaigns",
+        "call_reasons",
     }
     assert set(server._LOOKUP_KINDS) >= documented, (
         f"_LOOKUP_KINDS missing documented kinds: {documented - set(server._LOOKUP_KINDS)}"

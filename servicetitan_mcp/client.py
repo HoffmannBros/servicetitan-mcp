@@ -279,18 +279,24 @@ class ServiceTitanClient:
         resp = await self._send(method, path, params=params, json_body=json_body)
         return resp.status_code, (resp.json() if resp.content else {})
 
-    async def get(self, path: str, params: dict | None = None, timeout: float = 60) -> dict:
+    async def get(self, path: str, params: dict | None = None) -> dict:
         """GET request. `path` should start with / e.g. /crm/v2/tenant/{tenant}/customers"""
         return await self._request("GET", path, params=params)
 
-    async def post(self, path: str, json_body: dict | list | None = None, timeout: float = 60) -> dict:
-        return await self._request("POST", path, json_body=json_body)
+    async def post(
+        self, path: str, json_body: dict | list | None = None, params: dict | None = None
+    ) -> dict:
+        return await self._request("POST", path, params=params, json_body=json_body)
 
-    async def patch(self, path: str, json_body: dict | list | None = None, timeout: float = 60) -> dict:
-        return await self._request("PATCH", path, json_body=json_body)
+    async def patch(
+        self, path: str, json_body: dict | list | None = None, params: dict | None = None
+    ) -> dict:
+        return await self._request("PATCH", path, params=params, json_body=json_body)
 
-    async def put(self, path: str, json_body: dict | list | None = None, timeout: float = 60) -> dict:
-        return await self._request("PUT", path, json_body=json_body)
+    async def put(
+        self, path: str, json_body: dict | list | None = None, params: dict | None = None
+    ) -> dict:
+        return await self._request("PUT", path, params=params, json_body=json_body)
 
     async def delete(self, path: str) -> dict:
         """DELETE request. Internal use only (e.g. cancelling report queries);

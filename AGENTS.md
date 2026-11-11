@@ -35,7 +35,7 @@ When a session ends with pending work, offer to update `next_steps.md` with a sh
 
 ## Project
 
-Python MCP server wrapping ServiceTitan's REST API. It exposes 95 tools (count `@mcp.tool()` in `server.py`) across CRM, Jobs, Dispatch, Estimates, Invoicing, Pricebook, Inventory, Memberships, Payroll, Reporting, Forms, and Marketing. The full tool catalog and user-facing setup live in [README.md](README.md).
+Python MCP server wrapping ServiceTitan's REST API. It exposes 97 tools (count lines starting with `@mcp.tool()` in `server.py`: `grep -c "^@mcp.tool()"`; a bare `grep -c "@mcp.tool()"` also counts two docstring mentions) across CRM, Jobs, Dispatch, Estimates, Invoicing, Pricebook, Inventory, Memberships, Payroll, Reporting, Forms, and Marketing. The full tool catalog and user-facing setup live in [README.md](README.md).
 
 ## ServiceTitan API docs
 
@@ -49,20 +49,23 @@ ctx7 docs /websites/developer_servicetitan_io "<specific question>"
 
 - Python 3.10+. Dependencies: `mcp[cli]`, `httpx[socks]`, `pydantic`.
 - The console script `servicetitan-mcp` runs `servicetitan_mcp.server:main` (see [pyproject.toml](pyproject.toml)).
-- Transport is stdio by default; set `MCP_TRANSPORT=sse` for HTTP/SSE deployments.
+- Transport is stdio by default; set `MCP_TRANSPORT=sse` (or `streamable-http`) for HTTP deployments. `main()` and the Dockerfile both read it.
 
 ## Layout
 
-Six source files matter:
+Seven source files matter:
 
 - [`servicetitan_mcp/auth.py`](servicetitan_mcp/auth.py): `TokenManager` for OAuth2 client credentials. Tokens are cached per `tenant_id` and refreshed about 14 minutes into a 15-minute lifetime.
 - [`servicetitan_mcp/config.py`](servicetitan_mcp/config.py): tenant registry. Reads `ST_TENANTS` plus namespaced per-tenant env vars into `TenantCredentials` records, validates slugs as strict lowercase, and fails fast with a migration hint if the legacy single-tenant vars are set without `ST_TENANTS`.
 - [`servicetitan_mcp/client.py`](servicetitan_mcp/client.py): `ServiceTitanClient`. A shared `httpx.AsyncClient`, per-tenant token buckets from the `main_limiter_for(name)` and `reporting_limiter_for(name)` factories, a process-wide concurrency semaphore, and retry with exponential backoff that honors `Retry-After`. `client.download(path)` is the sanctioned way to fetch binary content.
 - [`servicetitan_mcp/report_export.py`](servicetitan_mcp/report_export.py): path resolution and CSV/JSONL serialization for `run_report_to_file`.
 - [`servicetitan_mcp/attachment_export.py`](servicetitan_mcp/attachment_export.py): pure helpers for `download_job_photos` (attachment classification, filename construction, output directory). Reuses `_expand_path`, `_sanitize`, and `_DEFAULT_EXPORT_DIR` from `report_export.py`.
+- [`servicetitan_mcp/feed_export.py`](servicetitan_mcp/feed_export.py): pure helpers for `export_feed_to_file` (output-path resolution and auto-naming, dotted-path field selection, the streaming JSONL/CSV `FeedFileWriter`). No async or network. Reuses the same three helpers from `report_export.py`.
 - [`servicetitan_mcp/server.py`](servicetitan_mcp/server.py): the `FastMCP` instance, every `@mcp.tool()` handler, the `_fmt()` pagination formatter, the `_get_client(tenant)` and `_resolve(tenant)` factories, and the `list_tenants` discovery tool.
 
 Tests live in [`tests/`](tests/) (pytest-asyncio) and cover the token bucket, retry and concurrency, pagination, input coercion, config, and the tool surfaces.
+
+[`scripts/smoke_live.py`](scripts/smoke_live.py) is the live smoke check: `python scripts/smoke_live.py <tenant>` calls every argument-free list tool once against the real API, read-only, and prints PASS / FAIL / NOT-ENABLED per tool with no response bodies. Every tool must appear in its `REGISTRY` or `SKIPPED`; `tests/test_smoke_registry.py` enforces that.
 
 ## Commands
 
@@ -80,7 +83,7 @@ Multi-tenant; configure one or more tenants:
 
 The legacy single-tenant vars (`ST_APP_KEY`, `ST_CLIENT_ID`, `ST_CLIENT_SECRET`, `ST_TENANT_ID`) are no longer read. If they are present without `ST_TENANTS`, startup raises a `RuntimeError` with a migration hint.
 
-Optional tuning, defaults in parentheses: `ST_RATE_LIMIT_RPS` (30, per tenant), `ST_REPORTING_RPM` (3, per tenant), `ST_MAX_CONCURRENCY` (10, process-wide), `ST_REPORT_QUERY_TIMEOUT_S` (600, per-page limit for async report queries), and `ST_OUTPUTS_DIR`, the default output directory for `run_report_to_file` (unset, exports land in the gitignored `report_exports/`). The export tool streams pages to a `.partial` file and `os.replace`s it only on success. `download_job_photos` writes to a `job_photos/` subfolder of the same directory, with the same `.partial` then `os.replace` pattern per file.
+Optional tuning, defaults in parentheses: `ST_RATE_LIMIT_RPS` (30, per tenant), `ST_REPORTING_RPM` (3, per tenant), `ST_MAX_CONCURRENCY` (10, process-wide), `ST_REPORT_QUERY_TIMEOUT_S` (600, per-page limit for async report queries), and `ST_OUTPUTS_DIR`, the default output directory for `run_report_to_file` and `export_feed_to_file` (unset, exports land in the gitignored `report_exports/`). Both export tools stream pages to a `.partial` file and `os.replace`s it only on success. `download_job_photos` writes to a `job_photos/` subfolder of the same directory, with the same `.partial` then `os.replace` pattern per file.
 
 ## Adding a new tool
 
@@ -117,6 +120,7 @@ async def list_<resource>(tenant: str, page: int = 1, page_size: int = 200, ...)
 - **One shared HTTP client.** Do not create `httpx.AsyncClient` instances inside handlers; go through `_resolve(tenant)`.
 - **Per-tenant rate limiters.** `main_limiter_for(name)` and `reporting_limiter_for(name)` return per-tenant singletons. The process-wide concurrency semaphore is separate and shared across tenants; it guards local fan-out, not ServiceTitan quota.
 - **Signed download URLs get no ServiceTitan headers.** Attachment downloads 302 to a short-lived signed storage URL. `client.download` follows it by hand with no `Authorization` or `ST-App-Key`, and keeps the signed query string out of error messages. Do not enable `follow_redirects` on the shared client; httpx would forward the credentials and it changes behavior for every other call.
+- **ServiceTitan ignores unknown query params, so a wrong filter name fails silently.** The call returns 200 with unfiltered data. Verify every new filter live by comparing `totalCount` with and without it (`includeTotal=true`), and run `scripts/smoke_live.py` after adding a tool. Mocked tests cannot catch a wrong slug or param name. Known traps: many endpoints honor only the exclusive `...Before` and silently ignore `...OnOrBefore` (see `_on_or_before_as_before`); array filters are comma-joined on some endpoints (`locationIds` on installed equipment) but must be repeated keys on others (`list_reviews`). When the API has no equivalent for an existing parameter, raise `ValueError` rather than return unfiltered rows.
 - **No silent default tenant.** Never add a fallback that picks a tenant when `tenant` is absent. A silent wrong-tenant answer is worse than any UX inconvenience.
 
 ## Git remote

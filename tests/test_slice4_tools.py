@@ -89,7 +89,7 @@ async def test_list_slice4_tool_hits_verified_path(monkeypatch, thunk, expected_
 
     assert "Error" not in out, out
     assert captured["path"] == expected_path
-    assert '"id": 1' in out
+    assert '"id":1' in out
     assert "hasMore=" in out  # _fmt footer
 
 

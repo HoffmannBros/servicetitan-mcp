@@ -93,7 +93,7 @@ async def test_list_subresource_tool_hits_verified_path(monkeypatch, thunk, expe
 
     assert "Error" not in out, out
     assert captured["path"] == expected_path
-    assert '"id": 1' in out
+    assert '"id":1' in out
     assert "hasMore=" in out  # _fmt footer
 
 

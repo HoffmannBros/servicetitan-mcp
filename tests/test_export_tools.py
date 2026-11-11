@@ -88,7 +88,7 @@ async def test_export_feed_hits_verified_path(monkeypatch, category, feed):
 
     assert "Error" not in out, out
     assert captured["path"] == f"/{category}/v2/tenant/123/export/{feed}"
-    assert '"id": 1' in out
+    assert '"id":1' in out
     assert "continueFrom='tok-1'" in out
 
 
