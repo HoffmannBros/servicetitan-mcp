@@ -229,3 +229,56 @@ def test_fmt_export_empty_page_round_trips():
     output = server._fmt_export({"data": [], "hasMore": False, "continueFrom": "tok"})
     body, _, _ = output.partition("\n\n(Export feed")
     assert json.loads(body) == []
+
+
+def test_fmt_zero_total_with_items_reports_unknown():
+    """Forms endpoints send totalCount=0 alongside a non-empty page and
+    hasMore=True. The footer must not claim "1 of 0"; hasMore stays as sent."""
+    out = server._fmt(
+        {"data": [{"id": 1}], "page": 1, "pageSize": 1, "totalCount": 0, "hasMore": True}
+    )
+    footer = _parse_footer(out)
+    assert footer["shown"] == 1
+    assert footer["total"] == "unknown"
+    assert footer["hasMore"] is True
+
+
+def test_fmt_zero_total_with_items_and_no_hasmore_infers_from_full_page():
+    out = server._fmt({"data": [{"id": 1}], "page": 1, "pageSize": 1, "totalCount": 0})
+    footer = _parse_footer(out)
+    assert footer["total"] == "unknown"
+    assert footer["hasMore"] is True
+
+
+def test_fmt_zero_total_on_empty_page_stays_zero():
+    out = server._fmt(
+        {"data": [], "page": 1, "pageSize": 50, "totalCount": 0, "hasMore": False}
+    )
+    footer = _parse_footer(out)
+    assert footer["shown"] == 0
+    assert footer["total"] == "0"
+    assert footer["hasMore"] is False
+
+
+@pytest.mark.parametrize("returned, expect_more", [(3, True), (2, False)])
+async def test_inventory_bills_bare_list_gets_footer(monkeypatch, returned, expect_more):
+    """/accounting/inventory-bills returns a bare JSON array (live-verified).
+    The tool must still emit the pagination footer, inferring hasMore from
+    whether a full page came back."""
+    bills = [{"id": i} for i in range(returned)]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/accounting/v2/tenant/123/inventory-bills"
+        assert request.url.params.get("pageSize") == "3"
+        return httpx.Response(200, json=bills)
+
+    _wire_client(monkeypatch, handler)
+    out = await server.list_inventory_bills(tenant="test", page=2, page_size=3)
+
+    body, _, _ = out.partition("\n\n(Showing")
+    assert json.loads(body) == bills
+    footer = _parse_footer(out)
+    assert footer["shown"] == returned
+    assert footer["total"] == "unknown"
+    assert footer["hasMore"] is expect_more
+    assert "page 2, pageSize 3" in out

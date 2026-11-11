@@ -208,6 +208,11 @@ def _fmt(data: dict | list) -> str:
     if isinstance(data, dict) and "data" in data:
         items = data["data"]
         raw_total = data.get("totalCount")
+        if raw_total == 0 and items:
+            # Some endpoints (forms, form submissions) send totalCount=0 with a
+            # non-empty page and hasMore=True: the total is not computed, not
+            # zero. Report it as unknown rather than "Showing 1 of 0".
+            raw_total = None
         total_display = raw_total if raw_total is not None else "unknown"
         page = data.get("page", 1)
         page_size = data.get("pageSize", len(items))
@@ -1166,6 +1171,11 @@ async def list_inventory_bills(
     if created_on_or_after:
         params["createdOnOrAfter"] = created_on_or_after
     data = await client.list_resource("accounting", "inventory-bills", page, page_size, params)
+    if isinstance(data, list):
+        # Live-verified: this endpoint returns a bare JSON array with no
+        # page/hasMore envelope. Wrap it so _fmt emits the pagination footer
+        # (hasMore is inferred from whether a full page came back).
+        data = {"data": data, "page": page, "pageSize": page_size}
     return _fmt(data)
 
 
