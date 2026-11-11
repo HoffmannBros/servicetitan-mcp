@@ -9,6 +9,7 @@ report_exports/
 
 # dev-only
 tests/
+scripts/
 docs/
 plans/
 .claude/

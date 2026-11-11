@@ -1,6 +1,6 @@
 # ServiceTitan MCP Server
 
-Connect Claude to ServiceTitan via API. ~90 tools covering CRM, Jobs, Accounting, Estimates, Dispatch, Pricebook, Inventory, Memberships, Payroll, Marketing, Reporting, Timesheets, Telecom, Customer Interactions, and more.
+Connect Claude to ServiceTitan via API. 97 tools covering CRM, Jobs, Accounting, Estimates, Dispatch, Pricebook, Inventory, Memberships, Payroll, Marketing, Reporting, Timesheets, Telecom, Customer Interactions, and more.
 
 Multi-tenant: one server instance can query any number of ServiceTitan tenants on a per-call basis, including cross-tenant aggregation.
 
@@ -141,20 +141,20 @@ _APP_KEY per tenant. See README for the full migration.
 
 Migration takes ~5 minutes per tenant: rename the four old vars with an `ST_TENANT_<NAME>_` prefix, and add `ST_TENANTS=<name>` naming that tenant. To add additional tenants, repeat the four-var block with new names and extend `ST_TENANTS`.
 
-## Available Tools (94 + `list_tenants`)
+## Available Tools (96 + `list_tenants`)
 
 Every tool below takes `tenant: str` as its first required argument. See "Multi-Tenant Usage" above.
 
 ### CRM
 - `list_customers` — Search and list customers
 - `get_customer` — Get customer details by ID
-- `list_locations` — List service locations
+- `list_locations` — List service locations; filter by street, unit, city, state, zip, country, name (case-insensitive "contains" matches), customer, or a batch of `ids`
 - `get_location` — Get location details
-- `list_leads` — List leads/opportunities
+- `list_leads` — List leads/opportunities (status: Open, Dismissed, Converted)
 - `get_lead` — Get lead details by ID
-- `list_bookings` — List bookings
+- `list_bookings` — List bookings (no status filter: ServiceTitan has none, so passing `status` raises)
 - `get_booking` — Get booking details by ID
-- `list_contacts` — List customer contacts
+- `list_contacts` — List contacts; with `customer_id`, reads that customer's own contact list
 - `list_customer_notes` — List a customer's free-text notes
 - `list_location_notes` — List a location's free-text notes
 - `list_location_contacts` — List a location's own contacts (distinct from the customer's)
@@ -162,13 +162,13 @@ Every tool below takes `tenant: str` as its first required argument. See "Multi-
 - `list_location_custom_field_types` — Location custom-field definitions
 
 ### Job Planning & Management
-- `list_jobs` — List jobs with filters (status, customer, date range)
+- `list_jobs` — List jobs: status, customer, closed created/completed/modified date windows (`*_on_or_after` inclusive, `*_before` exclusive), `job_number`, business unit, job type, campaign, technician, project, or `ids` (alone)
 - `get_job` — Get full job details
 - `list_job_notes` — List a job's free-text notes
 - `get_job_history` — Full job lifecycle event timeline (booked/dispatched/completed/…)
 - `list_job_cancel_reasons` — Cancellation-reason definitions (`active_only` filter)
 - `list_job_hold_reasons` — Hold-reason definitions (`active_only` filter)
-- `list_appointments` — List appointments by date range
+- `list_appointments` — List appointments by start window (prefer `starts_before`, exclusive), created/modified window, or `job_id`
 - `get_appointment` — Get appointment details by ID
 - `list_job_types` — List configured job types
 - `get_job_type` — Get one job-type definition by ID
@@ -190,8 +190,8 @@ Every tool below takes `tenant: str` as its first required argument. See "Multi-
 - `get_estimate` — Get estimate with line items
 
 ### Dispatch
-- `list_appointment_assignments` — Technician-to-appointment assignments
-- `list_technician_shifts` — Shift schedules
+- `list_appointment_assignments` — Technician-to-appointment assignments, by `job_id` or `appointment_id` (the endpoint has no start-time filter)
+- `list_technician_shifts` — Shift schedules; window with `starts_on_or_after` and `ends_on_or_before` (shifts have no start upper bound)
 - `get_technician_shift` — Get one shift by ID
 - `list_zones` — Dispatch zones
 - `list_non_job_appointments` — Meetings, training, etc.
@@ -215,6 +215,8 @@ Every tool below takes `tenant: str` as its first required argument. See "Multi-
 - `list_inventory_transfers` — Stock moved between locations/trucks
 - `list_inventory_receipts` — Items received against POs
 - `list_inventory_returns` — Items returned to vendors for credit
+
+The four inventory feeds and `list_technician_ratings` take `created_before` (exclusive); the older `created_on_or_before` still works and keeps the named day included.
 
 ### Customer Interactions
 - `list_technician_ratings` — Customer satisfaction scores per tech/job
@@ -250,28 +252,34 @@ Every tool below takes `tenant: str` as its first required argument. See "Multi-
 - `list_gross_pay_items` — Gross pay line items
 
 ### Telecom
-- `list_calls` — Phone calls
+- `list_calls` — Phone calls (prefer `created_before`, exclusive, for the upper bound)
 - `get_call` — Get one call (with recording links) by ID
 
 ### Forms
 - `list_forms` — Form templates
-- `list_form_submissions` — Submitted forms
+- `list_form_submissions` — Submitted forms (the date filter is on the submitted date)
 - `list_job_attachments` — Files attached to a job (metadata only; ServiceTitan returns no image URL)
 - `download_job_photos` — Download a job's photos to disk, for one job or every job completed in a date range. Field pro photos by default; files are named `{tenant}__{business unit}__{job type}__{job number}__{completed date}__{seq}_{attachment id}.{ext}` and logged to `manifest.jsonl`
 
 ### Marketing
 - `list_campaigns` — Marketing campaigns
 - `list_campaign_costs` — Campaign costs
+- `list_reviews` — Online reviews from Marketing Reputation (rating, text, matched job/technician), filterable by publish or import date, rating range, technicians, campaigns, locations, and source
+
+Attributed leads (`/marketingads/v2/.../attributed-leads`) need ServiceTitan's Marketing Pro package; none of the current tenants have it, so there is no typed tool for them yet.
 
 ### Equipment, Tasks, Timesheets
-- `list_installed_equipment` — Installed equipment at locations
+- `list_installed_equipment` — Installed equipment at locations; `location_ids` fetches a whole batch of locations in one call
 - `list_tasks` — Task management tasks
 - `list_activities` — Timesheet activities
 - `list_activity_categories` — Activity categories
 
 ### Power User
-- `export_feed` — Bulk-export an entire feed (customers, jobs, invoices, …) via continuation tokens; cheap on quota for full-table syncs and incremental change pulls
-- `servicetitan_api_call` — Make any arbitrary API call (GET/POST/PATCH/PUT)
+- `export_feed` — Bulk-export an entire feed (customers, jobs, invoices, …) via continuation tokens; cheap on quota for full-table syncs and incremental change pulls. Returns one page at a time.
+- `export_feed_to_file` — Walk a whole export feed (or everything since a date) to a JSONL or CSV file and return only metadata plus a short preview and the token to resume from. Use it for anything over a page or two.
+- `servicetitan_api_call` — Make any arbitrary API call (GET/POST/PATCH/PUT; `query_params` are sent with every method). API errors surface as tool errors with the response body.
+
+Static lookups (`get_lookup_tables` and the `servicetitan://lookups/{tenant}/{kind}` resource) now include `call_reasons`, the Job Booking reasons a CSR picks for a call that did not book.
 
 ## Authentication
 
@@ -293,7 +301,7 @@ The `list_customers` endpoint has no phone/email filter. Two options:
 ### Full job timeline for a customer
 1. `list_customers(tenant=..., name=...)` → customerId
 2. `list_jobs(tenant=..., customer_id=...)` → jobIds (status, dates)
-3. For a specific job: `list_appointments(tenant=..., starts_on_or_after=...)` filtered to that job, or `get_job(tenant=..., job_id=...)` for full detail
+3. For a specific job: `list_appointments(tenant=..., job_id=...)`, or `get_job(tenant=..., job_id=...)` for full detail
 4. `list_invoices(tenant=..., job_id=...)` for billing side
 5. `list_estimates(tenant=..., job_id=...)` if a quote exists
 
@@ -308,8 +316,9 @@ The `list_customers` endpoint has no phone/email filter. Two options:
 Claude orchestrates the fan-out; there's no server-side aggregation tool and no need to call `list_tenants` in the query path if the tenant set is already known.
 
 ### Technician's schedule today
-1. `list_appointment_assignments(tenant=..., starts_on_or_after="2024-04-22", starts_on_or_before="2024-04-23")`
-2. Cross-reference with `list_technicians(tenant=...)` (cache this — small and static) to map IDs → names.
+1. `list_appointments(tenant=..., starts_on_or_after="2024-04-22", starts_before="2024-04-23")` → appointment IDs for the day.
+2. `list_appointment_assignments(tenant=..., appointment_id=...)` per appointment (the assignments endpoint has no date filter).
+3. Cross-reference with `list_technicians(tenant=...)` (cache this — small and static) to map IDs → names.
 
 ### Open estimates by business unit
 1. `list_business_units(tenant=...)` — cache the BU ID → name map.
@@ -337,7 +346,7 @@ This server layers the following in front of those limits:
   - `ST_REPORTING_RPM` (default `3`)
   - `ST_MAX_CONCURRENCY` (default `10`) — process-wide cap on in-flight requests across all tenants
   - `ST_REPORT_QUERY_TIMEOUT_S` (default `600`) — how long `run_report` / `run_report_to_file` poll one page of an async report query before cancelling it
-  - `ST_OUTPUTS_DIR` (optional) — default directory for `run_report_to_file` output, and the parent of the `job_photos/` folder that `download_job_photos` writes to; falls back to the in-repo `report_exports/` if unset. Must be readable by whatever consumes the file (e.g. your sandbox/file tools).
+  - `ST_OUTPUTS_DIR` (optional) — default directory for `run_report_to_file` and `export_feed_to_file` output, and the parent of the `job_photos/` folder that `download_job_photos` writes to; falls back to the in-repo `report_exports/` if unset. Must be readable by whatever consumes the file (e.g. your sandbox/file tools).
 - **Async report queries.** ServiceTitan deprecated the synchronous report `/data` endpoint in ST-78 (July 2026). `run_report` and `run_report_to_file` use `POST .../data/query`: small reports come back inline, and longer ones return a token that the server polls at `data-queries/{token}` (polls count against the reporting bucket). A query that runs past `ST_REPORT_QUERY_TIMEOUT_S` is cancelled. If a tenant returns 404 for `/data/query`, the server falls back to the legacy `/data` endpoint.
 - **Automatic retry** on `429`, `502`, `503`, `504`:
   - Honors `Retry-After` header if the server sends one.
@@ -346,6 +355,16 @@ This server layers the following in front of those limits:
 - **Shared connection pool**: one `httpx.AsyncClient` is reused across all tool calls and all tenants to avoid per-request TCP handshakes. Pooling is per-host; ST is one host, so splitting per tenant would gain nothing.
 
 Retries log to stderr at the `[servicetitan-mcp]` prefix — tail the Claude Desktop logs to observe backoff behavior when investigating slowness.
+
+## Live smoke check
+
+The unit tests run against a mocked transport, so they cannot catch a wrong URL slug or a filter name ServiceTitan ignores. Before each release, run the live smoke check against at least one tenant (it needs the same `ST_TENANTS` / `ST_TENANT_<NAME>_*` env vars the server uses):
+
+```bash
+python scripts/smoke_live.py <tenant>
+```
+
+It calls every list tool that needs only a tenant, with `page_size=1`, one at a time and read-only, and prints PASS/FAIL per tool with no response bodies. A 403/409 that says a feature is not enabled on the tenant (for example Leads or CRM Contacts) prints NOT-ENABLED and does not fail the run. It exits 1 if any tool fails. Tools that need arguments are listed in `SKIPPED` inside the script, and `tests/test_smoke_registry.py` fails if a new tool is in neither list.
 
 ## Building the .mcpb bundle
 
@@ -361,7 +380,7 @@ mcpb pack . dist/servicetitan-mcp-<version>.mcpb
 `.mcpbignore` keeps private and dev-only files (`.env`, `next_steps.md`,
 `report_exports/`, `tests/`, …) out of the archive — the pack output lists every
 included file; it should be exactly `manifest.json`, `pyproject.toml`, `README.md`,
-`LICENSE`, and the seven `servicetitan_mcp/*.py` modules (11 files).
+`LICENSE`, and the eight `servicetitan_mcp/*.py` modules (12 files).
 
 Before sharing, always run the secret pre-flight:
 

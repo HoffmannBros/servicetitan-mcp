@@ -260,3 +260,27 @@ the two roadmaps don't fight each other.
 
 Follow CLAUDE.md "Adding a new tool" rules; verify every endpoint path live
 (`servicetitan_api_call`) before wiring — Phase 1 bugs proved doc snippets aren't reliable.
+
+## Usage data, 2026-11-11 (input for this decision, not acted on)
+
+A review of past Claude session transcripts on one machine counted 1,482
+ServiceTitan tool calls. Only 26 of the 95 tools were ever called. Two
+generic tools made up 70% of all calls: `export_feed` (614) and
+`servicetitan_api_call` (425). Most generic calls repeated a few patterns:
+
+| Pattern | Calls |
+|---|---|
+| `export_feed` walked one page at a time (`jpm/jobs` 276, `crm/customers/contacts` 128, `crm/locations` 69, `crm/customers` 64, memberships feeds 33) | 614 |
+| Raw GET `/crm/.../locations` with `street` (109) or `zip` (2) | 112 |
+| Raw GET `/equipmentsystems/.../installed-equipment` with `locationIds` | 100 |
+| `list_locations(customer_id=…)` once per customer | 99 |
+| Raw GET `/jpm/.../jobs` and `/appointments` for a closed date window | 97 |
+| Raw GET attributed leads (`marketingads`, 10 of them to the wrong `marketing-ads` slug) | 40 |
+
+The usage-driven improvements plan
+(`docs/plans/2026-11-11-usage-driven-improvements.md`) turned these into typed
+tools and filters (`export_feed_to_file`, address and batch-ID filters, date
+windows) and fixed two tools that always 404'd plus filters on 12 tools that ServiceTitan was
+silently ignoring. The usage data supports consolidating the rarely used
+reference and `get_*` tools, but that still needs a separate decision: it
+removes tool names coworkers may rely on.

@@ -73,6 +73,9 @@ HOW TO USE THIS SERVER EFFICIENTLY:
    whether more pages exist. `totalCount` may be reported as `unknown` for
    endpoints that don't return it; in that case `hasMore` is inferred from
    whether a full page came back, so keep paging until `hasMore=False`.
+   For a whole export feed, or everything changed since a date, use
+   `export_feed_to_file`: it walks every continuation token to a file and
+   returns only metadata, instead of `export_feed` one page at a time.
 
 3. RATE LIMITS ARE HANDLED FOR YOU. The client retries 429s with backoff, so
    transient throttling is invisible. But you can still exhaust quotas:
@@ -103,7 +106,9 @@ HOW TO USE THIS SERVER EFFICIENTLY:
    `list_tax_zones`, `list_payment_terms`, `list_membership_types`,
    `list_tag_types`, `list_activity_categories`, `list_pricebook_categories`,
    `list_inventory_vendors`, `list_trucks`, `list_user_roles`,
-   `list_campaigns`) rarely change. Call once per conversation and reuse
+   `list_campaigns`) rarely change. `get_lookup_tables` also carries
+   `call_reasons` (Job Booking reasons for calls that did not book), which
+   has no list tool of its own. Call once per conversation and reuse
    the IDs — re-fetching them on every question wastes calls. If your
    client supports MCP resources, prefer reading
    `servicetitan://lookups/{tenant}/{kind}` (or `servicetitan://tenants`
@@ -121,6 +126,10 @@ HOW TO USE THIS SERVER EFFICIENTLY:
    `{tenant_id}` placeholder). Use when a typed tool doesn't cover the
    endpoint you need — e.g. unusual search params, POST/PATCH writes, or
    beta endpoints. Check ServiceTitan's API docs for the exact path.
+   `query_params` are sent with every method. API errors (404, 400, 403)
+   come back as tool errors carrying ServiceTitan's response body; read it.
+   ServiceTitan silently ignores query params it doesn't recognize, so a
+   200 does not prove a filter worked: check that the result was narrowed.
 """,
 )
 
