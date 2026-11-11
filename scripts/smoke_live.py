@@ -117,6 +117,7 @@ REGISTRY: list[tuple[str, dict]] = [
     # Marketing
     ("list_campaigns", _ONE),
     ("list_campaign_costs", _ONE),
+    ("list_reviews", _ONE),
     # Equipment systems / task management / CRM activities
     ("list_installed_equipment", _ONE),
     ("list_tasks", _ONE),
@@ -167,6 +168,7 @@ SKIPPED: dict[str, str] = {
     # Others.
     "download_job_photos": "needs job IDs; downloads files to disk",
     "export_feed": "needs category and feed; continuation-token export",
+    "export_feed_to_file": "needs category and feed; writes a file",
     "servicetitan_api_call": "escape hatch; needs method and path",
     "get_lookup_tables": "fan-out over list tools already in the registry",
 }
