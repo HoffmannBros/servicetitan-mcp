@@ -75,7 +75,7 @@ async def test_list_reviews_hits_verified_path_with_no_filters(monkeypatch):
 
     assert captured["path"] == "/marketingreputation/v2/tenant/123/reviews"
     assert captured["params"] == {"page": "1", "pageSize": "200"}
-    assert '"internalId": 1' in out
+    assert '"internalId":1' in out
     assert "hasMore=" in out  # _fmt footer
 
 
