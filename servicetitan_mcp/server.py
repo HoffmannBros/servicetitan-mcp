@@ -375,7 +375,7 @@ async def list_leads(
     """List leads/sales opportunities (not yet converted to jobs).
 
     When to use: pipeline questions ("how many open leads", "which leads
-    stalled this month"). Filter by `status` (Open, Won, Lost, Dismissed).
+    stalled this month"). Filter by `status` (Open, Dismissed, Converted).
     When NOT: for work that's already been booked as a job, use `list_jobs`.
     For booking call intake, use `list_bookings`.
 
@@ -413,19 +413,25 @@ async def list_bookings(
 ) -> str:
     """List inbound bookings (call-in / web-form requests awaiting scheduling).
 
-    When to use: front-office / CSR questions — what came in today, which
-    bookings are still Pending. Status values: Pending, Scheduled, Converted,
-    Dismissed.
+    When to use: front-office / CSR questions — what came in recently. Each
+    row carries its own `status`; read it from the results.
     When NOT: if the booking has already been converted to a scheduled job,
     query `list_jobs` with a date filter instead.
 
+    `status` is not supported: ServiceTitan's bookings endpoint has no status
+    filter and silently ignores one (live-verified), so passing it raises
+    rather than returning unfiltered rows.
+
     tenant: name of a configured ServiceTitan tenant (call list_tenants)
     """
-    client = _resolve(tenant)
-    params: dict = {}
     if status:
-        params["status"] = status
-    data = await client.list_resource("crm", "bookings", page, page_size, params)
+        raise ValueError(
+            "list_bookings cannot filter by status: ServiceTitan's bookings "
+            "endpoint has no status filter and would return every booking. "
+            "Omit status and read each row's status field instead."
+        )
+    client = _resolve(tenant)
+    data = await client.list_resource("crm", "bookings", page, page_size)
     return _fmt(data)
 
 
@@ -460,13 +466,21 @@ async def list_contacts(
     When NOT: if the customer only has one primary contact, `get_customer`
     already includes it inline.
 
+    With `customer_id` this reads the customer's own contact list
+    (`/crm/.../customers/{id}/contacts`); the tenant-wide contacts endpoint
+    has no customer filter.
+
     tenant: name of a configured ServiceTitan tenant (call list_tenants)
     """
     client = _resolve(tenant)
-    params: dict = {}
     if customer_id:
-        params["customerId"] = customer_id
-    data = await client.list_resource("crm", "contacts", page, page_size, params)
+        # Live-verified: /crm/contacts has no customerId param (ignored);
+        # the per-customer sub-resource is the filtered view.
+        data = await client.list_resource(
+            "crm", f"customers/{customer_id}/contacts", page, page_size
+        )
+    else:
+        data = await client.list_resource("crm", "contacts", page, page_size)
     return _fmt(data)
 
 
@@ -622,6 +636,27 @@ def _on_or_before_as_before(value: str) -> str:
     except ValueError:
         return value
     return (day + timedelta(days=1)).isoformat()
+
+
+def _created_upper_bound(
+    params: dict, created_before: str | None, created_on_or_before: str | None
+) -> None:
+    """Set ServiceTitan's exclusive `createdBefore` from either upper bound.
+
+    For endpoints that ignore `createdOnOrBefore` (live-verified on the
+    inventory feeds): `created_before` is sent as-is, `created_on_or_before`
+    goes through `_on_or_before_as_before`. Passing both is ambiguous.
+    """
+    if created_before and created_on_or_before:
+        raise ValueError(
+            "Pass only one of created_before (exclusive) or "
+            "created_on_or_before (inclusive); both map to ServiceTitan's "
+            "createdBefore."
+        )
+    if created_before:
+        params["createdBefore"] = created_before
+    elif created_on_or_before:
+        params["createdBefore"] = _on_or_before_as_before(created_on_or_before)
 
 
 @mcp.tool()
@@ -1221,23 +1256,40 @@ async def list_appointment_assignments(
     page_size: int = 200,
     starts_on_or_after: str | None = None,
     starts_on_or_before: str | None = None,
+    job_id: int | None = None,
+    appointment_id: int | None = None,
 ) -> str:
     """List technician-to-appointment assignments (who is running which slot).
 
-    When to use: dispatcher questions — "who's on this job", "tech's
-    schedule today". Always pass a date range.
+    When to use: dispatcher questions — "who's on this job" (job_id), "who ran
+    this visit" (appointment_id). Always pass job_id or appointment_id; the
+    unfiltered list is the tenant's whole assignment history.
     When NOT: for the appointment slot itself (time, job, customer), use
     `list_appointments`. For planned shift availability (not actual dispatch),
     use `list_technician_shifts`.
 
+    For "tech's schedule on a date": call `list_appointments` with a start
+    window, then this tool per appointment_id. `starts_on_or_after` /
+    `starts_on_or_before` are not supported: ServiceTitan's assignments
+    endpoint has no start-time filter and silently ignores both
+    (live-verified), so passing either raises rather than returning every
+    assignment.
+
     tenant: name of a configured ServiceTitan tenant (call list_tenants)
     """
+    if starts_on_or_after or starts_on_or_before:
+        raise ValueError(
+            "list_appointment_assignments cannot filter by start time: "
+            "ServiceTitan ignores startsOnOrAfter/startsOnOrBefore here and "
+            "would return every assignment. Find appointments in the window "
+            "with list_appointments, then pass appointment_id or job_id."
+        )
     client = _resolve(tenant)
     params: dict = {}
-    if starts_on_or_after:
-        params["startsOnOrAfter"] = starts_on_or_after
-    if starts_on_or_before:
-        params["startsOnOrBefore"] = starts_on_or_before
+    if job_id:
+        params["jobId"] = job_id
+    if appointment_id:
+        params["appointmentIds"] = appointment_id
     data = await client.list_resource("dispatch", "appointment-assignments", page, page_size, params)
     return _fmt(data)
 
@@ -1249,6 +1301,7 @@ async def list_technician_shifts(
     page_size: int = 200,
     starts_on_or_after: str | None = None,
     starts_on_or_before: str | None = None,
+    ends_on_or_before: str | None = None,
 ) -> str:
     """List scheduled shifts (planned availability blocks, not dispatch).
 
@@ -1258,14 +1311,27 @@ async def list_technician_shifts(
     `list_appointment_assignments`. For time-clock actuals, use
     `list_activities` (timesheets).
 
+    Dates: YYYY-MM-DD or a full ISO-8601 timestamp; times are UTC. Window a
+    day with starts_on_or_after="2026-11-10" and ends_on_or_before=
+    "2026-11-11T12:00:00Z" (shifts that end after midnight UTC, i.e. US
+    evenings, need the later end bound). `starts_on_or_before` is not
+    supported: ServiceTitan ignores every start upper bound on shifts
+    (live-verified), so passing it raises; use `ends_on_or_before`.
+
     tenant: name of a configured ServiceTitan tenant (call list_tenants)
     """
+    if starts_on_or_before:
+        raise ValueError(
+            "list_technician_shifts cannot bound the shift start from above: "
+            "ServiceTitan ignores startsOnOrBefore/startsBefore here and would "
+            "return every later shift. Use ends_on_or_before instead."
+        )
     client = _resolve(tenant)
     params: dict = {}
     if starts_on_or_after:
         params["startsOnOrAfter"] = starts_on_or_after
-    if starts_on_or_before:
-        params["startsOnOrBefore"] = starts_on_or_before
+    if ends_on_or_before:
+        params["endsOnOrBefore"] = ends_on_or_before
     data = await client.list_resource("dispatch", "technician-shifts", page, page_size, params)
     return _fmt(data)
 
@@ -1551,8 +1617,9 @@ async def list_trucks(tenant: str, page: int = 1, page_size: int = 200) -> str:
 
 # Inventory transaction feeds. These records embed a full line-`items` array
 # each, so they default to a smaller page_size than the usual 200. All four
-# accept ST's standard createdOnOrAfter/createdOnOrBefore date filters
-# (verified against a live tenant).
+# honor createdOnOrAfter and createdBefore (exclusive); they silently ignore
+# createdOnOrBefore (live-verified), so the inclusive Python parameter is
+# translated by `_created_upper_bound`.
 
 @mcp.tool()
 async def list_inventory_adjustments(
@@ -1561,6 +1628,7 @@ async def list_inventory_adjustments(
     page_size: int = 50,
     created_on_or_after: str | None = None,
     created_on_or_before: str | None = None,
+    created_before: str | None = None,
     business_unit_id: int | None = None,
     active: bool | None = None,
 ) -> str:
@@ -1573,7 +1641,12 @@ async def list_inventory_adjustments(
     for vendor receipts use `list_inventory_receipts`.
 
     business_unit_id: filter to a single business unit (maps to businessUnitIds).
-    created_on_or_after / _before: ISO date "YYYY-MM-DD".
+    Dates: YYYY-MM-DD or a full ISO-8601 timestamp (UTC).
+    `created_on_or_after` is inclusive. For the upper bound prefer
+    `created_before` (EXCLUSIVE, sent as-is). `created_on_or_before` is kept
+    for older callers: ServiceTitan ignores an "on or before" param here, so
+    a bare date is sent as `createdBefore` of the next day (the named day
+    stays included). Pass only one of the two.
 
     tenant: name of a configured ServiceTitan tenant (call list_tenants)
     """
@@ -1581,8 +1654,7 @@ async def list_inventory_adjustments(
     params: dict = {}
     if created_on_or_after:
         params["createdOnOrAfter"] = created_on_or_after
-    if created_on_or_before:
-        params["createdOnOrBefore"] = created_on_or_before
+    _created_upper_bound(params, created_before, created_on_or_before)
     if business_unit_id is not None:
         params["businessUnitIds"] = business_unit_id
     if active is not None:
@@ -1598,6 +1670,7 @@ async def list_inventory_transfers(
     page_size: int = 50,
     created_on_or_after: str | None = None,
     created_on_or_before: str | None = None,
+    created_before: str | None = None,
     active: bool | None = None,
 ) -> str:
     """List inventory transfers (stock moved between locations/trucks).
@@ -1608,7 +1681,12 @@ async def list_inventory_transfers(
     When NOT: for manual quantity corrections use `list_inventory_adjustments`;
     for vendor receipts use `list_inventory_receipts`.
 
-    created_on_or_after / _before: ISO date "YYYY-MM-DD".
+    Dates: YYYY-MM-DD or a full ISO-8601 timestamp (UTC).
+    `created_on_or_after` is inclusive. For the upper bound prefer
+    `created_before` (EXCLUSIVE, sent as-is). `created_on_or_before` is kept
+    for older callers: ServiceTitan ignores an "on or before" param here, so
+    a bare date is sent as `createdBefore` of the next day (the named day
+    stays included). Pass only one of the two.
 
     tenant: name of a configured ServiceTitan tenant (call list_tenants)
     """
@@ -1616,8 +1694,7 @@ async def list_inventory_transfers(
     params: dict = {}
     if created_on_or_after:
         params["createdOnOrAfter"] = created_on_or_after
-    if created_on_or_before:
-        params["createdOnOrBefore"] = created_on_or_before
+    _created_upper_bound(params, created_before, created_on_or_before)
     if active is not None:
         params["active"] = active
     data = await client.list_resource("inventory", "transfers", page, page_size, params)
@@ -1631,6 +1708,7 @@ async def list_inventory_receipts(
     page_size: int = 50,
     created_on_or_after: str | None = None,
     created_on_or_before: str | None = None,
+    created_before: str | None = None,
     business_unit_id: int | None = None,
     active: bool | None = None,
 ) -> str:
@@ -1643,7 +1721,12 @@ async def list_inventory_receipts(
     vendor bill use `list_inventory_bills`.
 
     business_unit_id: filter to a single business unit (maps to businessUnitIds).
-    created_on_or_after / _before: ISO date "YYYY-MM-DD".
+    Dates: YYYY-MM-DD or a full ISO-8601 timestamp (UTC).
+    `created_on_or_after` is inclusive. For the upper bound prefer
+    `created_before` (EXCLUSIVE, sent as-is). `created_on_or_before` is kept
+    for older callers: ServiceTitan ignores an "on or before" param here, so
+    a bare date is sent as `createdBefore` of the next day (the named day
+    stays included). Pass only one of the two.
 
     tenant: name of a configured ServiceTitan tenant (call list_tenants)
     """
@@ -1651,8 +1734,7 @@ async def list_inventory_receipts(
     params: dict = {}
     if created_on_or_after:
         params["createdOnOrAfter"] = created_on_or_after
-    if created_on_or_before:
-        params["createdOnOrBefore"] = created_on_or_before
+    _created_upper_bound(params, created_before, created_on_or_before)
     if business_unit_id is not None:
         params["businessUnitIds"] = business_unit_id
     if active is not None:
@@ -1668,6 +1750,7 @@ async def list_inventory_returns(
     page_size: int = 50,
     created_on_or_after: str | None = None,
     created_on_or_before: str | None = None,
+    created_before: str | None = None,
     active: bool | None = None,
 ) -> str:
     """List inventory returns (items returned to a vendor for credit).
@@ -1678,7 +1761,12 @@ async def list_inventory_returns(
     When NOT: for the inbound receipt use `list_inventory_receipts`; for the
     PO use `list_purchase_orders`.
 
-    created_on_or_after / _before: ISO date "YYYY-MM-DD".
+    Dates: YYYY-MM-DD or a full ISO-8601 timestamp (UTC).
+    `created_on_or_after` is inclusive. For the upper bound prefer
+    `created_before` (EXCLUSIVE, sent as-is). `created_on_or_before` is kept
+    for older callers: ServiceTitan ignores an "on or before" param here, so
+    a bare date is sent as `createdBefore` of the next day (the named day
+    stays included). Pass only one of the two.
 
     tenant: name of a configured ServiceTitan tenant (call list_tenants)
     """
@@ -1686,8 +1774,7 @@ async def list_inventory_returns(
     params: dict = {}
     if created_on_or_after:
         params["createdOnOrAfter"] = created_on_or_after
-    if created_on_or_before:
-        params["createdOnOrBefore"] = created_on_or_before
+    _created_upper_bound(params, created_before, created_on_or_before)
     if active is not None:
         params["active"] = active
     data = await client.list_resource("inventory", "returns", page, page_size, params)
@@ -1706,6 +1793,7 @@ async def list_technician_ratings(
     technician_id: int | None = None,
     created_on_or_after: str | None = None,
     created_on_or_before: str | None = None,
+    created_before: str | None = None,
 ) -> str:
     """List technician ratings (customer satisfaction scores per tech/job).
 
@@ -1715,7 +1803,12 @@ async def list_technician_ratings(
     `list_calls`.
 
     technician_id: filter to one technician's ratings.
-    created_on_or_after / _before: ISO date "YYYY-MM-DD".
+    Dates: YYYY-MM-DD or a full ISO-8601 timestamp (UTC).
+    `created_on_or_after` is inclusive. For the upper bound prefer
+    `created_before` (EXCLUSIVE, sent as-is). `created_on_or_before` is kept
+    for older callers: ServiceTitan ignores an "on or before" param here, so
+    a bare date is sent as `createdBefore` of the next day (the named day
+    stays included). Pass only one of the two.
 
     tenant: name of a configured ServiceTitan tenant (call list_tenants)
     """
@@ -1725,8 +1818,7 @@ async def list_technician_ratings(
         params["technicianId"] = technician_id
     if created_on_or_after:
         params["createdOnOrAfter"] = created_on_or_after
-    if created_on_or_before:
-        params["createdOnOrBefore"] = created_on_or_before
+    _created_upper_bound(params, created_before, created_on_or_before)
     data = await client.list_resource(
         "customer-interactions", "technician-ratings", page, page_size, params
     )
@@ -2423,7 +2515,9 @@ async def list_gross_pay_items(
     tenant: name of a configured ServiceTitan tenant (call list_tenants)
     """
     client = _resolve(tenant)
-    params: dict = {"page": page, "pageSize": page_size}
+    # Live-verified: payroll_id was previously never sent; ST filters on
+    # `payrollIds`.
+    params: dict = {"page": page, "pageSize": page_size, "payrollIds": payroll_id}
     if employee_id:
         params["employeeId"] = employee_id
     path = f"/payroll/v2/tenant/{client.tenant_id}/gross-pay-items"
@@ -2529,12 +2623,17 @@ async def list_form_submissions(
     form", compliance audits. Filter by date to stay manageable.
     When NOT: for the template definition, use `list_forms`.
 
+    created_on_or_after: YYYY-MM-DD or ISO-8601 (UTC), inclusive. It filters
+    on the submission's `submittedOn` date (sent as `submittedOnOrAfter`;
+    the endpoint has no created-date filter).
+
     tenant: name of a configured ServiceTitan tenant (call list_tenants)
     """
     client = _resolve(tenant)
     params: dict = {}
     if created_on_or_after:
-        params["createdOnOrAfter"] = created_on_or_after
+        # Live-verified: ST silently ignores `createdOnOrAfter` here.
+        params["submittedOnOrAfter"] = created_on_or_after
     data = await client.list_resource("forms", "submissions", page, page_size, params)
     return _fmt(data)
 
