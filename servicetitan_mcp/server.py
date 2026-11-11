@@ -170,8 +170,23 @@ def list_tenants() -> str:
     return json.dumps({"tenants": tenant_names()}, indent=2)
 
 
+def _dump_items(items: list) -> str:
+    """Serialize a list of records as compact JSON, one record per line.
+
+    The reader is a model, so `indent=2` whitespace is pure token cost. One
+    record per line keeps the output greppable, and the result is still a
+    valid JSON array.
+    """
+    if not items:
+        return "[]"
+    rows = ",\n".join(
+        json.dumps(item, separators=(",", ":"), default=str) for item in items
+    )
+    return f"[\n{rows}\n]"
+
+
 def _fmt(data: dict | list) -> str:
-    """Pretty-print API response and expose pagination state.
+    """Format a list response as compact JSON and expose pagination state.
 
     Returns every item ServiceTitan returned — the caller's `page_size` is the
     only knob that governs output size. We do NOT further truncate here, because
@@ -199,12 +214,12 @@ def _fmt(data: dict | list) -> str:
             f"\n\n(Showing {len(items)} of {total_display} results — "
             f"page {page}, pageSize {page_size}, hasMore={has_more})"
         )
-        return json.dumps(items, indent=2, default=str) + note
+        return _dump_items(items) + note
     return json.dumps(data, indent=2, default=str)
 
 
 def _fmt_export(data: dict) -> str:
-    """Pretty-print a bulk export-feed response with continuation state.
+    """Format a bulk export-feed response as compact JSON with continuation state.
 
     Separate from _fmt because export feeds page via an opaque `continueFrom`
     token, not page numbers, and `hasMore` carries WAIT semantics distinct from
@@ -232,7 +247,7 @@ def _fmt_export(data: dict) -> str:
         f"\n\n(Export feed — {len(items)} items this page, "
         f"hasMore={has_more}, continueFrom={continue_from!r}. {guidance})"
     )
-    return json.dumps(items, indent=2, default=str) + note
+    return _dump_items(items) + note
 
 
 # ═══════════════════════════════════════════════════════════════════════
