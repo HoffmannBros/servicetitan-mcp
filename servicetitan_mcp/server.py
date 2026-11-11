@@ -30,6 +30,7 @@ import json
 import os
 import sys
 import time
+from datetime import date, timedelta
 
 import httpx
 
@@ -603,6 +604,24 @@ async def list_location_custom_field_types(
 #  JOB PLANNING & MANAGEMENT — Jobs, Appointments, Projects
 # ═══════════════════════════════════════════════════════════════════════
 
+def _on_or_before_as_before(value: str) -> str:
+    """Translate an inclusive "on or before" bound into ServiceTitan's exclusive
+    `...Before` param.
+
+    Some ServiceTitan list endpoints silently ignore `...OnOrBefore` names and
+    honor only `...Before` (exclusive). A bare date (YYYY-MM-DD) is advanced one
+    day so the named day stays included; a full timestamp is passed through
+    unchanged (the one-instant difference is immaterial).
+    """
+    if len(value) != 10:
+        return value
+    try:
+        day = date.fromisoformat(value)
+    except ValueError:
+        return value
+    return (day + timedelta(days=1)).isoformat()
+
+
 @mcp.tool()
 async def list_jobs(
     tenant: str,
@@ -612,18 +631,42 @@ async def list_jobs(
     customer_id: int | None = None,
     created_on_or_after: str | None = None,
     completed_on_or_after: str | None = None,
+    created_before: str | None = None,
+    completed_before: str | None = None,
+    modified_on_or_after: str | None = None,
+    modified_before: str | None = None,
+    job_number: str | None = None,
+    ids: str | None = None,
+    business_unit_id: int | None = None,
+    job_type_id: int | None = None,
+    campaign_id: int | None = None,
+    technician_id: int | None = None,
+    project_id: int | None = None,
 ) -> str:
     """List jobs (scheduled or completed work orders). THE core work entity.
 
     When to use: "what jobs for customer X", "jobs completed last week",
-    "open in-progress jobs". Always pass at least one filter (status,
-    customer_id, or a date) — an unfiltered list is huge.
+    "jobs created in October", "open in-progress jobs", "jobs for business
+    unit / job type / campaign / technician X". Always pass at least one
+    filter (status, customer_id, an id filter, or a date window) — an
+    unfiltered list is huge.
     When NOT: if you want the individual scheduling slots, use
     `list_appointments` (one job can have multiple appointments). For
     technician → appointment assignments, use `list_appointment_assignments`.
 
     status values: Scheduled, InProgress, Hold, Completed, Canceled.
-    Date format: YYYY-MM-DD.
+
+    Date windows (created_*, completed_*, modified_*): pass YYYY-MM-DD or a
+    full ISO-8601 timestamp; times are UTC. Lower bounds (`*_on_or_after`)
+    are inclusive; upper bounds (`*_before`) are EXCLUSIVE. For all of
+    October: created_on_or_after="2026-10-01", created_before="2026-11-01".
+
+    job_number: exact job number (the number shown in the ServiceTitan UI).
+    ids: comma-separated job IDs (max 50). ServiceTitan rejects `ids`
+    combined with any other filter (HTTP 400), so pass it alone.
+    business_unit_id, job_type_id, campaign_id, technician_id, project_id:
+    numeric IDs (see `get_lookup_tables`, `list_technicians`,
+    `list_projects`).
 
     page_size is passed through to ServiceTitan (no client-side cap). For
     attribution / counting work, pick a page_size large enough to return every
@@ -642,6 +685,29 @@ async def list_jobs(
         params["createdOnOrAfter"] = created_on_or_after
     if completed_on_or_after:
         params["completedOnOrAfter"] = completed_on_or_after
+    if created_before:
+        params["createdBefore"] = created_before
+    if completed_before:
+        params["completedBefore"] = completed_before
+    if modified_on_or_after:
+        params["modifiedOnOrAfter"] = modified_on_or_after
+    if modified_before:
+        params["modifiedBefore"] = modified_before
+    if job_number:
+        # Live-verified: ST honors `number`; `jobNumber` is silently ignored.
+        params["number"] = job_number
+    if ids:
+        params["ids"] = ids
+    if business_unit_id:
+        params["businessUnitId"] = business_unit_id
+    if job_type_id:
+        params["jobTypeId"] = job_type_id
+    if campaign_id:
+        params["campaignId"] = campaign_id
+    if technician_id:
+        params["technicianId"] = technician_id
+    if project_id:
+        params["projectId"] = project_id
     data = await client.list_resource("jpm", "jobs", page, page_size, params)
     return _fmt(data)
 
@@ -776,26 +842,59 @@ async def list_appointments(
     page_size: int = 200,
     starts_on_or_after: str | None = None,
     starts_on_or_before: str | None = None,
+    starts_before: str | None = None,
+    created_on_or_after: str | None = None,
+    created_before: str | None = None,
+    modified_on_or_after: str | None = None,
+    modified_before: str | None = None,
+    job_id: int | None = None,
 ) -> str:
     """List appointment slots (a scheduled visit; one job can have many).
 
     When to use: "what's on the calendar tomorrow", "reschedule count this
-    week". ALWAYS pass a date range — a full-tenant appointment list is
-    very large.
+    week", "appointments booked (created) last week", "every visit for job
+    X" (job_id). ALWAYS pass a date range or job_id — a full-tenant
+    appointment list is very large.
     When NOT: to see who's assigned to run an appointment, use
     `list_appointment_assignments`. For non-customer-facing time blocks
     (meetings, training), use `list_non_job_appointments`.
 
-    Date format: YYYY-MM-DD.
+    Dates: YYYY-MM-DD or a full ISO-8601 timestamp; times are UTC. Lower
+    bounds (`*_on_or_after`) are inclusive; `*_before` bounds are EXCLUSIVE.
+    For the appointments starting on 2026-11-10 only:
+    starts_on_or_after="2026-11-10", starts_before="2026-11-11".
+
+    Upper bound on start: prefer `starts_before` (exclusive, sent as-is).
+    `starts_on_or_before` is kept for older callers: ServiceTitan ignores an
+    "on or before" param here, so a bare date is sent as `startsBefore` of
+    the next day (the named day stays included). Pass only one of the two.
 
     tenant: name of a configured ServiceTitan tenant (call list_tenants)
     """
+    if starts_before and starts_on_or_before:
+        raise ValueError(
+            "Pass only one of starts_before (exclusive) or starts_on_or_before "
+            "(inclusive); both map to ServiceTitan's startsBefore."
+        )
     client = _resolve(tenant)
     params: dict = {}
     if starts_on_or_after:
         params["startsOnOrAfter"] = starts_on_or_after
-    if starts_on_or_before:
-        params["startsOnOrBefore"] = starts_on_or_before
+    if starts_before:
+        params["startsBefore"] = starts_before
+    elif starts_on_or_before:
+        # Live-verified: ST silently ignores `startsOnOrBefore`.
+        params["startsBefore"] = _on_or_before_as_before(starts_on_or_before)
+    if created_on_or_after:
+        params["createdOnOrAfter"] = created_on_or_after
+    if created_before:
+        params["createdBefore"] = created_before
+    if modified_on_or_after:
+        params["modifiedOnOrAfter"] = modified_on_or_after
+    if modified_before:
+        params["modifiedBefore"] = modified_before
+    if job_id:
+        params["jobId"] = job_id
     data = await client.list_resource("jpm", "appointments", page, page_size, params)
     return _fmt(data)
 
@@ -2341,6 +2440,7 @@ async def list_calls(
     page_size: int = 200,
     created_on_or_after: str | None = None,
     created_on_or_before: str | None = None,
+    created_before: str | None = None,
 ) -> str:
     """List telecom calls (inbound/outbound phone records with recordings).
 
@@ -2349,14 +2449,30 @@ async def list_calls(
     volume is typically high.
     When NOT: for the resulting booking, use `list_bookings`.
 
+    Dates: YYYY-MM-DD or a full ISO-8601 timestamp; times are UTC.
+    `created_on_or_after` is inclusive. For the upper bound prefer
+    `created_before` (EXCLUSIVE, sent as-is). `created_on_or_before` is kept
+    for older callers: ServiceTitan ignores an "on or before" param here, so
+    a bare date is sent as `createdBefore` of the next day (the named day
+    stays included). Pass only one of the two.
+
     tenant: name of a configured ServiceTitan tenant (call list_tenants)
     """
+    if created_before and created_on_or_before:
+        raise ValueError(
+            "Pass only one of created_before (exclusive) or "
+            "created_on_or_before (inclusive); both map to ServiceTitan's "
+            "createdBefore."
+        )
     client = _resolve(tenant)
     params: dict = {}
     if created_on_or_after:
         params["createdOnOrAfter"] = created_on_or_after
-    if created_on_or_before:
-        params["createdOnOrBefore"] = created_on_or_before
+    if created_before:
+        params["createdBefore"] = created_before
+    elif created_on_or_before:
+        # Live-verified: ST silently ignores `createdOnOrBefore`.
+        params["createdBefore"] = _on_or_before_as_before(created_on_or_before)
     data = await client.list_resource("telecom", "calls", page, page_size, params)
     return _fmt(data)
 
