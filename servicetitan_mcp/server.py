@@ -290,15 +290,39 @@ async def list_locations(
     page: int = 1,
     page_size: int = 200,
     customer_id: int | None = None,
+    ids: list[int] | None = None,
+    name: str | None = None,
+    street: str | None = None,
+    unit: str | None = None,
+    city: str | None = None,
+    state: str | None = None,
+    zip: str | None = None,
+    country: str | None = None,
 ) -> str:
     """List service locations (physical addresses a customer owns).
 
-    When to use: a customer has multiple sites and you need to pick one, or
-    enumerating locations for route/territory analysis.
+    When to use: finding a location by street address (pass `street`, and
+    `zip` or `city` to narrow it) — e.g. "which customer is at 123 Main St?";
+    a customer has multiple sites and you need to pick one; fetching a known
+    set of locations in one call with `ids` instead of one `get_location`
+    per ID; enumerating locations for route/territory analysis.
     When NOT: a customer with a single location — the address is already
     inside the `list_customers` / `get_customer` response.
-    Tip: always pass `customer_id` when you have it — otherwise this returns
-    every location in the tenant.
+
+    Text filters (`name`, `street`, `unit`, `city`, `state`, `zip`,
+    `country`) are case-insensitive "contains" matches, not exact: `street`
+    "main st" matches "123 Main St" and "4500 Main Street"; `zip` "6312"
+    matches every zip containing that run. Pass the house number with the
+    street name for a tight match, and check the returned address before
+    relying on a single hit. Filters combine with AND.
+    Tip: always pass at least one filter — with none, this returns every
+    location in the tenant.
+
+    customer_id: only locations belonging to this customer.
+    ids: specific location IDs (ServiceTitan accepts at most 50).
+    name: location name (usually the customer's name), contains match.
+    street / unit / city / state / zip / country: address parts, contains
+        match.
 
     tenant: name of a configured ServiceTitan tenant (call list_tenants)
     """
@@ -306,6 +330,19 @@ async def list_locations(
     params: dict = {}
     if customer_id:
         params["customerId"] = customer_id
+    if ids:
+        params["ids"] = ",".join(str(i) for i in ids)
+    for key, value in (
+        ("name", name),
+        ("street", street),
+        ("unit", unit),
+        ("city", city),
+        ("state", state),
+        ("zip", zip),
+        ("country", country),
+    ):
+        if value:
+            params[key] = value
     data = await client.list_resource("crm", "locations", page, page_size, params)
     return _fmt(data)
 
@@ -316,8 +353,8 @@ async def get_location(tenant: str, location_id: int) -> str:
 
     When to use: you have a location_id (from a job or `list_locations`) and
     need site-specific details (zone, access notes, installed equipment link).
-    When NOT: if looking up by address, use `list_locations` with
-    `customer_id`.
+    When NOT: if looking up by address, use `list_locations` with `street`
+    (and `zip` or `city`).
 
     tenant: name of a configured ServiceTitan tenant (call list_tenants)
     """
