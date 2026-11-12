@@ -31,8 +31,10 @@ manages the runtime and dependencies automatically (via its bundled uv).
      to Claude ("list open jobs for acme").
    - **Tenant ID / Client ID / Client Secret / App Key** — see
      [Getting Your Credentials](#getting-your-credentials).
-4. Have more than one ServiceTitan tenant? Fill in Tenants 2–5 the same way.
-   Otherwise leave them blank.
+4. Have more than one ServiceTitan tenant? Save Tenant 1 first, then reopen the
+   extension's settings and fill in Tenants 2–4 the same way, at most two per
+   save. Otherwise leave them blank. (Claude Desktop rejects a save that changes
+   more than 12 settings and shows "error saving".)
 5. Optionally change the **Report export folder** (where `run_report_to_file`
    saves CSVs; defaults to `Documents/ServiceTitan Reports`).
 
@@ -390,7 +392,7 @@ unzip -p dist/servicetitan-mcp-<version>.mcpb | grep -aE "cs1\.|cs2\."  # only R
 ```
 
 Keep `version` in `manifest.json` and `pyproject.toml` in lockstep. The bundle's
-settings form maps to `ST_TENANT_SLOT1..5_*` env vars (see `config.py`); the
+settings form maps to `ST_TENANT_SLOT1..4_*` env vars (see `config.py`); the
 classic `ST_TENANTS` scheme is unaffected and takes precedence when set.
 
 ## License

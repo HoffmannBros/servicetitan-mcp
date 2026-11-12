@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "servicetitan-mcp",
   "display_name": "Service Titan Desktop MCP",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Connect Claude to ServiceTitan: jobs, customers, invoices, estimates, dispatch, pricebook, payroll, memberships, and reporting.",
   "author": {
     "name": "Justin Schmidt"
@@ -39,11 +39,6 @@
         "ST_TENANT_SLOT4_CLIENT_ID": "${user_config.tenant4_client_id}",
         "ST_TENANT_SLOT4_CLIENT_SECRET": "${user_config.tenant4_client_secret}",
         "ST_TENANT_SLOT4_APP_KEY": "${user_config.tenant4_app_key}",
-        "ST_TENANT_SLOT5_NAME": "${user_config.tenant5_name}",
-        "ST_TENANT_SLOT5_ID": "${user_config.tenant5_id}",
-        "ST_TENANT_SLOT5_CLIENT_ID": "${user_config.tenant5_client_id}",
-        "ST_TENANT_SLOT5_CLIENT_SECRET": "${user_config.tenant5_client_secret}",
-        "ST_TENANT_SLOT5_APP_KEY": "${user_config.tenant5_app_key}",
         "ST_OUTPUTS_DIR": "${user_config.outputs_dir}"
       }
     }
@@ -195,43 +190,6 @@
       "type": "string",
       "title": "Tenant 4 — App Key",
       "description": "Required only if Tenant 4 name is set.",
-      "required": false,
-      "default": "",
-      "sensitive": true
-    },
-    "tenant5_name": {
-      "type": "string",
-      "title": "Tenant 5 — Name (optional)",
-      "description": "Leave blank if unused.",
-      "required": false,
-      "default": ""
-    },
-    "tenant5_id": {
-      "type": "string",
-      "title": "Tenant 5 — Tenant ID",
-      "description": "Required only if Tenant 5 name is set.",
-      "required": false,
-      "default": ""
-    },
-    "tenant5_client_id": {
-      "type": "string",
-      "title": "Tenant 5 — Client ID",
-      "description": "Required only if Tenant 5 name is set.",
-      "required": false,
-      "default": ""
-    },
-    "tenant5_client_secret": {
-      "type": "string",
-      "title": "Tenant 5 — Client Secret",
-      "description": "Required only if Tenant 5 name is set.",
-      "required": false,
-      "default": "",
-      "sensitive": true
-    },
-    "tenant5_app_key": {
-      "type": "string",
-      "title": "Tenant 5 — App Key",
-      "description": "Required only if Tenant 5 name is set.",
       "required": false,
       "default": "",
       "sensitive": true

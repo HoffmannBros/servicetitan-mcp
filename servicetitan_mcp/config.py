@@ -27,7 +27,10 @@ _PER_TENANT_VARS = (
 _LEGACY_VARS = ("ST_TENANT_ID", "ST_APP_KEY", "ST_CLIENT_ID", "ST_CLIENT_SECRET")
 
 # Number of numbered tenant slots exposed by the .mcpb bundle settings form.
-_SLOT_COUNT = 5
+# Capped at 4: Claude Desktop rejects a settings save that changes more than
+# 12 values, and it counts every secret field the form sends, blank or not.
+# 4 slots x 2 secrets + Tenant 1's 3 plain fields (+ the export folder) = 12.
+_SLOT_COUNT = 4
 
 
 @dataclass(frozen=True)

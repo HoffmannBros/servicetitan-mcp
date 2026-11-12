@@ -16,7 +16,7 @@ Environment variables (set in claude_desktop_config.json or .env):
 
 Alternative (used by the Claude Desktop .mcpb bundle, whose settings form
 maps fixed field names): numbered slots ST_TENANT_SLOT1_NAME / _ID /
-_CLIENT_ID / _CLIENT_SECRET / _APP_KEY … up to SLOT5. `ST_TENANTS` takes
+_CLIENT_ID / _CLIENT_SECRET / _APP_KEY … up to SLOT4. `ST_TENANTS` takes
 precedence when both are set; see config.py.
 
 Every @mcp.tool() takes a required `tenant` argument naming one of the
