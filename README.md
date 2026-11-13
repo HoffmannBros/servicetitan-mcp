@@ -26,15 +26,28 @@ manages the runtime and dependencies automatically (via its bundled uv).
    [latest release](https://github.com/HoffmannBros/servicetitan-mcp/releases/latest)
    (or build it yourself — see [Building the bundle](#building-the-mcpb-bundle)).
 2. Double-click it, or drag it into **Claude Desktop → Settings → Extensions**.
-3. Fill in **Tenant 1** (all five fields are required):
-   - **Name** — a short lowercase nickname (e.g. `acme`); you'll use it when talking
-     to Claude ("list open jobs for acme").
-   - **Tenant ID / Client ID / Client Secret / App Key** — see
+3. Paste every tenant into the **Tenants** field, all on one line. Five fields
+   per tenant separated by `|`, tenants separated by `;`:
+
+   ```
+   acme | <tenant id> | <client id> | <client secret> | <app key> ; other | <tenant id> | ...
+   ```
+
+   - **Name** (first field) is a short lowercase nickname (e.g. `acme`); you'll
+     use it when talking to Claude ("list open jobs for acme"). Uppercase and
+     spaces are normalized (`St Louis` becomes `st_louis`).
+   - **Tenant ID / Client ID / Client Secret / App Key**: see
      [Getting Your Credentials](#getting-your-credentials).
-4. Have more than one ServiceTitan tenant? Save Tenant 1 first, then reopen the
-   extension's settings and fill in Tenants 2–4 the same way, at most two per
-   save. Otherwise leave them blank. (Claude Desktop rejects a save that changes
-   more than 12 settings and shows "error saving".)
+   - Use `;` between tenants, not line breaks: the field turns pasted line
+     breaks into spaces.
+   - Hoffmann Brothers coworkers: ask Justin for your line instead of building it.
+
+   Any number of tenants saves in one go. If the server can't read the line,
+   its error names the entry and the field that's wrong, never a credential.
+4. Leave the **Legacy: Tenant N** fields blank. They are only there so installs
+   from before 1.3.0 keep working after upgrading, and they go away in 1.4.0:
+   if you used them, paste your tenants into **Tenants** and clear the legacy
+   names. A tenant can't be in both places.
 5. Optionally change the **Report export folder** (where `run_report_to_file`
    saves CSVs; defaults to `Documents/ServiceTitan Reports`).
 
@@ -388,12 +401,24 @@ Before sharing, always run the secret pre-flight:
 
 ```bash
 unzip -l dist/servicetitan-mcp-<version>.mcpb        # eyeball the file list
-unzip -p dist/servicetitan-mcp-<version>.mcpb | grep -aE "cs1\.|cs2\."  # only README placeholders may match
+unzip -p dist/servicetitan-mcp-<version>.mcpb | grep -aE "cs1\.|cs2\."  # only README/manifest placeholders may match
 ```
 
 Keep `version` in `manifest.json` and `pyproject.toml` in lockstep. The bundle's
-settings form maps to `ST_TENANT_SLOT1..4_*` env vars (see `config.py`); the
-classic `ST_TENANTS` scheme is unaffected and takes precedence when set.
+**Tenants** field maps to `ST_TENANTS_INLINE` (one line, `name | tenant id |
+client id | client secret | app key ; ...`); the legacy slot fields map to
+`ST_TENANT_SLOT1..4_*` and are merged with it (see `config.py`). The classic
+`ST_TENANTS` scheme is unaffected and takes precedence when set.
+
+To build a Tenants line from your classic env vars, run
+`python scripts/tenants_line.py` (add `--only acme,other` for a subset). It
+copies the line to the clipboard and prints only the tenant names; `--print`
+prints it instead where no clipboard tool exists.
+
+Claude Desktop rejects a settings save that changes more than 12 values, and it
+counts every secret field the form sends, blank or not.
+`tests/test_manifest_budget.py` keeps a fresh install's first save under that
+limit; check it before adding any secret field.
 
 ## License
 

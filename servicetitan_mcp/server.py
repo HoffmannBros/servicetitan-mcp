@@ -14,10 +14,12 @@ Environment variables (set in claude_desktop_config.json or .env):
                                     report query page before cancelling
                                     (default 600)
 
-Alternative (used by the Claude Desktop .mcpb bundle, whose settings form
-maps fixed field names): numbered slots ST_TENANT_SLOT1_NAME / _ID /
-_CLIENT_ID / _CLIENT_SECRET / _APP_KEY … up to SLOT4. `ST_TENANTS` takes
-precedence when both are set; see config.py.
+Alternative (used by the Claude Desktop .mcpb bundle): ST_TENANTS_INLINE holds
+every tenant on one line, `name | tenant id | client id | client secret |
+app key ; name | ...`, from the bundle's single secret Tenants field. Legacy
+numbered slots ST_TENANT_SLOT1_NAME / _ID / _CLIENT_ID / _CLIENT_SECRET /
+_APP_KEY … up to SLOT4 are still read and merged with it. `ST_TENANTS` takes
+precedence over both; see config.py.
 
 Every @mcp.tool() takes a required `tenant` argument naming one of the
 configured tenants. Call `list_tenants` to discover the names.

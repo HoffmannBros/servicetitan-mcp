@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "servicetitan-mcp",
   "display_name": "Service Titan Desktop MCP",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "description": "Connect Claude to ServiceTitan: jobs, customers, invoices, estimates, dispatch, pricebook, payroll, memberships, and reporting.",
   "author": {
     "name": "Justin Schmidt"
@@ -19,6 +19,7 @@
       "command": "uv",
       "args": ["run", "--directory", "${__dirname}", "python", "-m", "servicetitan_mcp.server"],
       "env": {
+        "ST_TENANTS_INLINE": "${user_config.tenants}",
         "ST_TENANT_SLOT1_NAME": "${user_config.tenant1_name}",
         "ST_TENANT_SLOT1_ID": "${user_config.tenant1_id}",
         "ST_TENANT_SLOT1_CLIENT_ID": "${user_config.tenant1_client_id}",
@@ -51,62 +52,74 @@
     }
   },
   "user_config": {
+    "tenants": {
+      "type": "string",
+      "title": "Tenants",
+      "description": "Every ServiceTitan tenant on ONE line. Five fields per tenant separated by |, tenants separated by ; (line breaks don't work here). Format: name | tenant id | client id | client secret | app key ; name | ... Example: st_louis | 1234567 | cid.xxxx | cs1.xxxx | xxxx ; nashville | 7654321 | cid.yyyy | cs1.yyyy | yyyy The name is what you call the tenant when talking to Claude. Ask Justin for your line. Stored in your OS keychain.",
+      "required": false,
+      "sensitive": true
+    },
     "tenant1_name": {
       "type": "string",
-      "title": "Tenant 1 — Name",
-      "description": "Short nickname for this ServiceTitan tenant (e.g. acme or st_louis). You'll use this name when talking to Claude. Uppercase and spaces are normalized (St Louis -> st_louis).",
-      "required": true
+      "title": "Legacy: Tenant 1 — Name",
+      "description": "Legacy field from versions before 1.3.0, removed in 1.4.0. Paste your tenants into the Tenants field above instead.",
+      "required": false,
+      "default": ""
     },
     "tenant1_id": {
       "type": "string",
-      "title": "Tenant 1 — Tenant ID",
+      "title": "Legacy: Tenant 1 — Tenant ID",
       "description": "Numeric tenant ID from the ServiceTitan developer portal (Integrations > API Application Access).",
-      "required": true
+      "required": false,
+      "default": ""
     },
     "tenant1_client_id": {
       "type": "string",
-      "title": "Tenant 1 — Client ID",
+      "title": "Legacy: Tenant 1 — Client ID",
       "description": "OAuth client ID (starts with cid.).",
-      "required": true
+      "required": false,
+      "default": ""
     },
     "tenant1_client_secret": {
       "type": "string",
-      "title": "Tenant 1 — Client Secret",
+      "title": "Legacy: Tenant 1 — Client Secret",
       "description": "OAuth client secret (starts with cs1. or cs2.). Stored in your OS keychain.",
-      "required": true,
-      "sensitive": true
+      "required": false,
+      "sensitive": true,
+      "default": ""
     },
     "tenant1_app_key": {
       "type": "string",
-      "title": "Tenant 1 — App Key",
+      "title": "Legacy: Tenant 1 — App Key",
       "description": "Application key from the developer portal. Stored in your OS keychain.",
-      "required": true,
-      "sensitive": true
+      "required": false,
+      "sensitive": true,
+      "default": ""
     },
     "tenant2_name": {
       "type": "string",
-      "title": "Tenant 2 — Name (optional)",
-      "description": "Leave blank if you only have one ServiceTitan tenant.",
+      "title": "Legacy: Tenant 2 — Name",
+      "description": "Legacy field, removed in 1.4.0. Use the Tenants field above.",
       "required": false,
       "default": ""
     },
     "tenant2_id": {
       "type": "string",
-      "title": "Tenant 2 — Tenant ID",
+      "title": "Legacy: Tenant 2 — Tenant ID",
       "description": "Required only if Tenant 2 name is set.",
       "required": false,
       "default": ""
     },
     "tenant2_client_id": {
       "type": "string",
-      "title": "Tenant 2 — Client ID",
+      "title": "Legacy: Tenant 2 — Client ID",
       "description": "Required only if Tenant 2 name is set.",
       "required": false,
       "default": ""
     },
     "tenant2_client_secret": {
       "type": "string",
-      "title": "Tenant 2 — Client Secret",
+      "title": "Legacy: Tenant 2 — Client Secret",
       "description": "Required only if Tenant 2 name is set.",
       "required": false,
       "default": "",
@@ -114,7 +127,7 @@
     },
     "tenant2_app_key": {
       "type": "string",
-      "title": "Tenant 2 — App Key",
+      "title": "Legacy: Tenant 2 — App Key",
       "description": "Required only if Tenant 2 name is set.",
       "required": false,
       "default": "",
@@ -122,28 +135,28 @@
     },
     "tenant3_name": {
       "type": "string",
-      "title": "Tenant 3 — Name (optional)",
-      "description": "Leave blank if unused.",
+      "title": "Legacy: Tenant 3 — Name",
+      "description": "Legacy field, removed in 1.4.0. Use the Tenants field above.",
       "required": false,
       "default": ""
     },
     "tenant3_id": {
       "type": "string",
-      "title": "Tenant 3 — Tenant ID",
+      "title": "Legacy: Tenant 3 — Tenant ID",
       "description": "Required only if Tenant 3 name is set.",
       "required": false,
       "default": ""
     },
     "tenant3_client_id": {
       "type": "string",
-      "title": "Tenant 3 — Client ID",
+      "title": "Legacy: Tenant 3 — Client ID",
       "description": "Required only if Tenant 3 name is set.",
       "required": false,
       "default": ""
     },
     "tenant3_client_secret": {
       "type": "string",
-      "title": "Tenant 3 — Client Secret",
+      "title": "Legacy: Tenant 3 — Client Secret",
       "description": "Required only if Tenant 3 name is set.",
       "required": false,
       "default": "",
@@ -151,7 +164,7 @@
     },
     "tenant3_app_key": {
       "type": "string",
-      "title": "Tenant 3 — App Key",
+      "title": "Legacy: Tenant 3 — App Key",
       "description": "Required only if Tenant 3 name is set.",
       "required": false,
       "default": "",
@@ -159,28 +172,28 @@
     },
     "tenant4_name": {
       "type": "string",
-      "title": "Tenant 4 — Name (optional)",
-      "description": "Leave blank if unused.",
+      "title": "Legacy: Tenant 4 — Name",
+      "description": "Legacy field, removed in 1.4.0. Use the Tenants field above.",
       "required": false,
       "default": ""
     },
     "tenant4_id": {
       "type": "string",
-      "title": "Tenant 4 — Tenant ID",
+      "title": "Legacy: Tenant 4 — Tenant ID",
       "description": "Required only if Tenant 4 name is set.",
       "required": false,
       "default": ""
     },
     "tenant4_client_id": {
       "type": "string",
-      "title": "Tenant 4 — Client ID",
+      "title": "Legacy: Tenant 4 — Client ID",
       "description": "Required only if Tenant 4 name is set.",
       "required": false,
       "default": ""
     },
     "tenant4_client_secret": {
       "type": "string",
-      "title": "Tenant 4 — Client Secret",
+      "title": "Legacy: Tenant 4 — Client Secret",
       "description": "Required only if Tenant 4 name is set.",
       "required": false,
       "default": "",
@@ -188,7 +201,7 @@
     },
     "tenant4_app_key": {
       "type": "string",
-      "title": "Tenant 4 — App Key",
+      "title": "Legacy: Tenant 4 — App Key",
       "description": "Required only if Tenant 4 name is set.",
       "required": false,
       "default": "",

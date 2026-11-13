@@ -81,6 +81,13 @@ Multi-tenant; configure one or more tenants:
 - `ST_TENANTS`: comma-separated tenant slugs (lowercase, `^[a-z][a-z0-9_-]*$`).
 - For each slug `<NAME>` (uppercased in the key): `ST_TENANT_<NAME>_ID`, `ST_TENANT_<NAME>_CLIENT_ID`, `ST_TENANT_<NAME>_CLIENT_SECRET`, `ST_TENANT_<NAME>_APP_KEY`.
 
+The Claude Desktop bundle (`.mcpb`) uses two other sources, read only when `ST_TENANTS` is unset and merged with each other (the same name in both is an error):
+
+- `ST_TENANTS_INLINE`: every tenant on one line from the bundle's single secret Tenants field, `name | tenant id | client id | client secret | app key ; name | ...`. `;` or newlines separate tenants, though the Claude Desktop field turns pasted line breaks into spaces. Errors name the entry and field, never a credential value. `scripts/tenants_line.py` builds the line from the classic vars and copies it to the clipboard.
+- `ST_TENANT_SLOT1..4_NAME / _ID / _CLIENT_ID / _CLIENT_SECRET / _APP_KEY`: legacy numbered slots from bundles before 1.3.0, kept for one release so upgrades keep their settings. Removal is planned for 1.4.0.
+
+Claude Desktop rejects a settings save that changes more than 12 values and counts every secret field, blank or not; `tests/test_manifest_budget.py` guards this.
+
 The legacy single-tenant vars (`ST_APP_KEY`, `ST_CLIENT_ID`, `ST_CLIENT_SECRET`, `ST_TENANT_ID`) are no longer read. If they are present without `ST_TENANTS`, startup raises a `RuntimeError` with a migration hint.
 
 Optional tuning, defaults in parentheses: `ST_RATE_LIMIT_RPS` (30, per tenant), `ST_REPORTING_RPM` (3, per tenant), `ST_MAX_CONCURRENCY` (10, process-wide), `ST_REPORT_QUERY_TIMEOUT_S` (600, per-page limit for async report queries), and `ST_OUTPUTS_DIR`, the default output directory for `run_report_to_file` and `export_feed_to_file` (unset, exports land in the gitignored `report_exports/`). Both export tools stream pages to a `.partial` file and `os.replace`s it only on success. `download_job_photos` writes to a `job_photos/` subfolder of the same directory, with the same `.partial` then `os.replace` pattern per file.
